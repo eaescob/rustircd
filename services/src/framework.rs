@@ -121,10 +121,10 @@ impl ServiceManager {
         self.services.get(name).map(|s| s.as_ref())
     }
     
-    /// Get a mutable service by name
-    pub fn get_service_mut(&mut self, name: &str) -> Option<&mut dyn Service> {
-        self.services.get_mut(name).map(|s| s.as_mut())
-    }
+    // /// Get a mutable service by name
+    // pub fn get_service_mut(&mut self, name: &str) -> Option<&mut (dyn Service + '_)> {
+    //     self.services.get_mut(name).map(|s| s.as_mut())
+    // }
     
     /// Handle a message from a client
     pub async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ServiceResult> {

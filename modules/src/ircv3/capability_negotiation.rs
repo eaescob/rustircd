@@ -86,7 +86,7 @@ impl CapabilityNegotiation {
         
         let response = Message::new(
             rustircd_core::MessageType::Custom("CAP".to_string()),
-            vec!["*".to_string(), "LS".to_string(), cap_list],
+            vec!["*".to_string(), "LS".to_string(), cap_list.clone()],
         );
         
         // TODO: Send response to client

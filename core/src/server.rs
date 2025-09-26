@@ -4,13 +4,14 @@ use crate::{
     User, Message, MessageType, NumericReply, Config, ModuleManager,
     connection::ConnectionHandler, Error, Result, module::ModuleResult, client::ClientState,
     Database, BroadcastSystem, NetworkQueryManager, NetworkMessageHandler, ExtensionManager,
+    Prefix,
 };
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::net::{TcpListener, TcpStream};
-use tokio_rustls::{TlsAcceptor, TlsStream};
+use tokio::net::TcpListener;
+use tokio_rustls::TlsAcceptor;
 use rustls::{ServerConfig, Certificate, PrivateKey};
 use std::io::BufReader;
 
@@ -143,7 +144,7 @@ impl Server {
     
     /// Load modules from configuration
     async fn load_modules(&mut self) -> Result<()> {
-        let mut module_manager = self.module_manager.write().await;
+        let _module_manager = self.module_manager.write().await;
         
         for module_name in &self.config.modules.enabled_modules {
             match module_name.as_str() {
@@ -219,7 +220,7 @@ impl Server {
     
     /// Start server listener for server-to-server connections
     async fn start_server_listener(&self) -> Result<()> {
-        let server_listener = TcpListener::bind(
+        let _server_listener = TcpListener::bind(
             format!("{}:{}", self.config.connection.bind_address, self.config.connection.server_port)
         ).await?;
         
@@ -231,7 +232,7 @@ impl Server {
     
     /// Start message processing loop
     async fn start_message_processor(&self) -> Result<()> {
-        let connection_handler = self.connection_handler.clone();
+        let _connection_handler = self.connection_handler.clone();
         let module_manager = self.module_manager.clone();
         let users = self.users.clone();
         let nick_to_id = self.nick_to_id.clone();
@@ -394,6 +395,23 @@ impl Server {
             }
             MessageType::Whowas => {
                 self.handle_whowas(client_id, message).await?;
+            }
+            // Messaging commands
+            MessageType::PrivMsg => {
+                self.handle_privmsg(client_id, message).await?;
+            }
+            MessageType::Notice => {
+                self.handle_notice(client_id, message).await?;
+            }
+            // Miscellaneous commands
+            MessageType::Away => {
+                self.handle_away(client_id, message).await?;
+            }
+            MessageType::Ison => {
+                self.handle_ison(client_id, message).await?;
+            }
+            MessageType::Userhost => {
+                self.handle_userhost(client_id, message).await?;
             }
             _ => {
                 // Command not handled by core
@@ -946,6 +964,224 @@ impl Server {
             
             let end_msg = NumericReply::end_of_whowas(target_nick);
             let _ = client.send(end_msg);
+        }
+        Ok(())
+    }
+    
+    /// Handle PRIVMSG command
+    async fn handle_privmsg(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            if !client.is_registered() {
+                let error_msg = NumericReply::not_registered();
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            
+            if message.params.len() < 2 {
+                let error_msg = NumericReply::no_recipients("PRIVMSG");
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            
+            let target = &message.params[0];
+            let text = &message.params[1];
+            
+            if text.is_empty() {
+                let error_msg = NumericReply::no_text_to_send();
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            
+            // Get sender information
+            let sender_nick = client.nickname().unwrap_or("unknown");
+            let sender_user = client.username().unwrap_or("unknown");
+            let sender_host = client.hostname().unwrap_or("unknown");
+            
+            // Create message with sender prefix
+            let sender_prefix = Prefix::User {
+                nick: sender_nick.to_string(),
+                user: sender_user.to_string(),
+                host: sender_host.to_string(),
+            };
+            
+            let privmsg = Message::with_prefix(
+                sender_prefix,
+                MessageType::PrivMsg,
+                vec![target.to_string(), text.to_string()],
+            );
+            
+            // Check if target is a channel or user
+            if target.starts_with('#') || target.starts_with('&') || target.starts_with('+') || target.starts_with('!') {
+                // Channel message - delegate to channel module if available
+                // For now, just log it
+                tracing::info!("PRIVMSG to channel {}: {}", target, text);
+            } else {
+                // Private message to user
+                if let Some(target_user) = self.database.get_user_by_nick(target) {
+                    // Find the target user's client and send the message
+                    // For now, just log it
+                    tracing::info!("PRIVMSG from {} to {}: {}", sender_nick, target, text);
+                } else {
+                    let error_msg = NumericReply::no_such_nick(target);
+                    let _ = client.send(error_msg);
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    /// Handle NOTICE command
+    async fn handle_notice(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            if !client.is_registered() {
+                // NOTICE doesn't send error replies for unregistered users
+                return Ok(());
+            }
+            
+            if message.params.len() < 2 {
+                // NOTICE doesn't send error replies for missing parameters
+                return Ok(());
+            }
+            
+            let target = &message.params[0];
+            let text = &message.params[1];
+            
+            if text.is_empty() {
+                // NOTICE doesn't send error replies for empty text
+                return Ok(());
+            }
+            
+            // Get sender information
+            let sender_nick = client.nickname().unwrap_or("unknown");
+            let sender_user = client.username().unwrap_or("unknown");
+            let sender_host = client.hostname().unwrap_or("unknown");
+            
+            // Create message with sender prefix
+            let sender_prefix = Prefix::User {
+                nick: sender_nick.to_string(),
+                user: sender_user.to_string(),
+                host: sender_host.to_string(),
+            };
+            
+            let notice = Message::with_prefix(
+                sender_prefix,
+                MessageType::Notice,
+                vec![target.to_string(), text.to_string()],
+            );
+            
+            // Check if target is a channel or user
+            if target.starts_with('#') || target.starts_with('&') || target.starts_with('+') || target.starts_with('!') {
+                // Channel notice - delegate to channel module if available
+                tracing::info!("NOTICE to channel {}: {}", target, text);
+            } else {
+                // Private notice to user
+                if let Some(_target_user) = self.database.get_user_by_nick(target) {
+                    tracing::info!("NOTICE from {} to {}: {}", sender_nick, target, text);
+                }
+                // NOTICE doesn't send error replies for non-existent users
+            }
+        }
+        Ok(())
+    }
+    
+    /// Handle AWAY command
+    async fn handle_away(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            if !client.is_registered() {
+                let error_msg = NumericReply::not_registered();
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            
+            // Get user from database
+            if let Some(nick) = client.nickname() {
+                if let Some(mut user) = self.database.get_user_by_nick(nick) {
+                    if message.params.is_empty() {
+                        // Remove away status
+                        user.away_message = None;
+                        self.database.add_user(user);
+                        
+                        let unaway_msg = NumericReply::unaway();
+                        let _ = client.send(unaway_msg);
+                    } else {
+                        // Set away message
+                        let away_message = message.params[0].clone();
+                        user.away_message = Some(away_message.clone());
+                        self.database.add_user(user);
+                        
+                        let now_away_msg = NumericReply::now_away();
+                        let _ = client.send(now_away_msg);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    /// Handle ISON command
+    async fn handle_ison(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            if !client.is_registered() {
+                let error_msg = NumericReply::not_registered();
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            
+            if message.params.is_empty() {
+                // No nicknames provided, send empty response
+                let ison_msg = NumericReply::ison(&[]);
+                let _ = client.send(ison_msg);
+                return Ok(());
+            }
+            
+            // Check which nicknames are online
+            let mut online_nicks = Vec::new();
+            for nick in &message.params {
+                if self.database.get_user_by_nick(nick).is_some() {
+                    online_nicks.push(nick.clone());
+                }
+            }
+            
+            let ison_msg = NumericReply::ison(&online_nicks);
+            let _ = client.send(ison_msg);
+        }
+        Ok(())
+    }
+    
+    /// Handle USERHOST command
+    async fn handle_userhost(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            if !client.is_registered() {
+                let error_msg = NumericReply::not_registered();
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            
+            if message.params.is_empty() {
+                // No nicknames provided, send empty response
+                let userhost_msg = NumericReply::userhost(&[]);
+                let _ = client.send(userhost_msg);
+                return Ok(());
+            }
+            
+            // Get user information for each nickname
+            let mut userhost_entries = Vec::new();
+            for nick in &message.params {
+                if let Some(user) = self.database.get_user_by_nick(nick) {
+                    let operator_flag = if user.is_operator { "*" } else { "" };
+                    let away_flag = if user.away_message.is_some() { "G" } else { "H" };
+                    let entry = format!("{}={}{}@{}", nick, operator_flag, away_flag, user.host);
+                    userhost_entries.push(entry);
+                }
+            }
+            
+            let userhost_msg = NumericReply::userhost(&userhost_entries);
+            let _ = client.send(userhost_msg);
         }
         Ok(())
     }

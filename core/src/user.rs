@@ -1,6 +1,6 @@
 //! User management and tracking
 
-use crate::{Message, MessageType, Prefix, NumericReply};
+use crate::Prefix;
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -153,7 +153,7 @@ impl User {
     /// Get user info for WHO command
     pub fn who_info(&self, channel: &str) -> String {
         let modes = if self.is_operator { "@" } else { "" };
-        format!("{} {} {} {} {} {} :0 {}", 
+        format!("{} {} {} {} {} {} :0 {} {}", 
                 channel, self.username, self.host, self.server, self.nick, 
                 if self.is_away() { "G" } else { "H" }, 
                 modes, self.realname)

@@ -1,7 +1,7 @@
 //! Efficient message broadcasting system for IRC daemon
 
 use crate::{Message, User, Error, Result, Client};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;

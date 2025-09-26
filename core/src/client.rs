@@ -1,7 +1,6 @@
 //! Client connection management
 
 use crate::{Message, User, Error, Result};
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 

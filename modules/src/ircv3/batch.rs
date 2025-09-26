@@ -56,12 +56,12 @@ impl Batch {
             messages: Vec::new(),
         };
         
-        self.active_batches.insert(batch_id.clone(), batch_info);
+        self.active_batches.insert(batch_id.clone(), batch_info.clone());
         
         // Subscribe creator to batch
         self.client_batches.entry(creator)
             .or_insert_with(Vec::new)
-            .push(batch_id);
+            .push(batch_id.clone());
         
         tracing::info!("Started batch {} of type {}", batch_id, batch_info.batch_type);
         Ok(())
@@ -151,7 +151,7 @@ impl Batch {
     
     /// Parse batch message
     pub fn parse_batch_message(message: &Message) -> Result<Option<(String, String, Vec<String>)>> {
-        if message.command != rustircd_core::MessageType::Custom("BATCH") {
+        if message.command != rustircd_core::MessageType::Custom("BATCH".to_string()) {
             return Ok(None);
         }
         

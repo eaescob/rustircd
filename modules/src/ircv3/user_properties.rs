@@ -131,8 +131,8 @@ impl UserProperties {
     
     /// Remove user property
     pub fn remove_property(&mut self, user_id: &Uuid, property: &str) -> Result<Option<String>> {
+        let old_value = self.get_property(user_id, property);
         if let Some(user_props) = self.user_properties.get_mut(user_id) {
-            let old_value = self.get_property(user_id, property);
             
             match property {
                 "realname" => {

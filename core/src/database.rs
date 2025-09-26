@@ -1,7 +1,7 @@
 //! In-memory database for users, servers, and user history
 
-use crate::{User, Message, Error, Result};
-use std::collections::{HashMap, HashSet, VecDeque};
+use crate::{User, Error, Result};
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use chrono::{DateTime, Utc, Duration};
@@ -113,9 +113,9 @@ impl Database {
             self.users_by_ident.remove(&ident);
 
             // Remove from all channels
-            if let Some(channels) = self.user_channels.remove(&user.nick) {
-                for channel_name in channels.keys() {
-                    if let Some(mut members) = self.channel_members.get_mut(channel_name) {
+            if let Some((_, channels)) = self.user_channels.remove(&user.nick) {
+                for channel_name in channels {
+                    if let Some(mut members) = self.channel_members.get_mut(&channel_name) {
                         members.remove(&user.nick);
                     }
                 }

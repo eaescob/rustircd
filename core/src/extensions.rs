@@ -3,7 +3,7 @@
 //! This module provides hooks and extension points that allow modules
 //! to extend core functionality without modifying the core itself.
 
-use crate::{User, Message, Client, Error, Result};
+use crate::{User, Message, Client, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

@@ -6,7 +6,9 @@
 use rustircd_core::{
     User, Message, Client, Error, Result, MessageType, NumericReply,
     extensions::{UserExtension, MessageExtension, CapabilityExtension, MessageTagExtension, CapabilityAction, CapabilityResult},
+    module::ModuleResult,
 };
+use uuid::Uuid;
 use std::collections::HashMap;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -313,7 +315,7 @@ impl MessageExtension for EchoMessageIntegration {
         }
     }
     
-    async fn on_message_postprocess(&self, client: &Client, message: &Message, result: &crate::module::ModuleResult) -> Result<()> {
+    async fn on_message_postprocess(&self, client: &Client, message: &Message, result: &ModuleResult) -> Result<()> {
         Ok(())
     }
     
@@ -439,7 +441,7 @@ impl MessageExtension for BatchIntegration {
         Ok(Some(message.clone()))
     }
     
-    async fn on_message_postprocess(&self, client: &Client, message: &Message, result: &crate::module::ModuleResult) -> Result<()> {
+    async fn on_message_postprocess(&self, client: &Client, message: &Message, result: &ModuleResult) -> Result<()> {
         Ok(())
     }
     

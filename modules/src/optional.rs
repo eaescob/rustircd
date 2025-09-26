@@ -1,6 +1,6 @@
 //! Optional IRC commands module
 
-use rustircd_core::{Module, ModuleResult, Client, Message, User, Error, Result};
+use rustircd_core::{Module, module::ModuleResult, Client, Message, User, Error, Result};
 use async_trait::async_trait;
 
 /// Optional IRC commands module
@@ -45,7 +45,7 @@ impl Module for OptionalModule {
     }
     
     async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ModuleResult> {
-        match message.command {
+        match &message.command {
             rustircd_core::MessageType::Custom(cmd) => {
                 match cmd.as_str() {
                     "AWAY" => {

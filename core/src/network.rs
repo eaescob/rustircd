@@ -1,6 +1,6 @@
 //! Network-wide query system for IRC daemon
 
-use crate::{Message, User, Error, Result, Database, ServerInfo};
+use crate::{User, Error, Result, Database, ServerInfo};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

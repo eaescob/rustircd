@@ -1,10 +1,8 @@
 //! Module system for extensible IRC daemon
 
-use crate::{Client, Message, User, Error, Result};
+use crate::{Client, Message, User, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Module trait that all modules must implement
 #[async_trait]
@@ -131,9 +129,11 @@ impl ModuleManager {
     }
     
     /// Get a mutable module by name
-    pub fn get_module_mut(&mut self, name: &str) -> Option<&mut dyn Module> {
-        self.modules.get_mut(name).map(|m| m.as_mut())
-    }
+    /// Note: This method is commented out due to lifetime issues with trait objects
+    /// Use handle_message or other methods that work with the modules directly
+    // pub fn get_module_mut(&mut self, name: &str) -> Option<&mut (dyn Module + '_)> {
+    //     self.modules.get_mut(name).map(move |m| m.as_mut())
+    // }
     
     /// Handle a message from a client
     pub async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ModuleResult> {

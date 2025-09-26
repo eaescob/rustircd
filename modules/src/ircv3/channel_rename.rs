@@ -67,7 +67,7 @@ impl ChannelRename {
             reason,
         };
         
-        self.pending_renames.insert(old_name, rename_record);
+        self.pending_renames.insert(old_name.clone(), rename_record);
         tracing::info!("Channel rename requested: {} -> {}", old_name, new_name);
         Ok(())
     }
@@ -76,7 +76,7 @@ impl ChannelRename {
     pub fn approve_rename(&mut self, old_name: &str) -> Result<RenameRecord> {
         if let Some(rename_record) = self.pending_renames.remove(old_name) {
             // Add to history
-            self.rename_history.entry(old_name.clone())
+            self.rename_history.entry(old_name.to_string())
                 .or_insert_with(Vec::new)
                 .push(rename_record.clone());
             

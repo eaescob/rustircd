@@ -91,6 +91,11 @@ pub enum NumericReply {
     RplLUserMe = 255,
     RplLocalUsers = 265,
     RplGlobalUsers = 266,
+    RplAway = 301,
+    RplUnaway = 305,
+    RplNowAway = 306,
+    RplUserhost = 302,
+    RplIson = 303,
     
     // Error replies
     ErrNoSuchNick = 401,
@@ -228,6 +233,30 @@ impl NumericReply {
         Self::ErrNotRegistered.reply(
             "*",
             vec!["You have not registered".to_string()],
+        )
+    }
+    
+    /// ERR_NORECIPIENT
+    pub fn no_recipients(command: &str) -> Message {
+        Self::ErrNoRecipients.reply(
+            "*",
+            vec![format!("No recipient given ({})", command)],
+        )
+    }
+    
+    /// ERR_NOTEXTTOSEND
+    pub fn no_text_to_send() -> Message {
+        Self::ErrNoTextToSend.reply(
+            "*",
+            vec!["No text to send".to_string()],
+        )
+    }
+    
+    /// ERR_NOSUCHNICK
+    pub fn no_such_nick(nick: &str) -> Message {
+        Self::ErrNoSuchNick.reply(
+            "*",
+            vec![format!("No such nick/channel: {}", nick)],
         )
     }
     
@@ -542,6 +571,52 @@ impl NumericReply {
         Self::RplWhoisSpecial.reply(
             "*",
             vec![nick.to_string(), format!("Bot version: {} | Capabilities: {}", version, capabilities)],
+        )
+    }
+    
+    // AWAY command replies
+    
+    /// RPL_AWAY
+    pub fn away(nick: &str, away_message: &str) -> Message {
+        Self::RplAway.reply(
+            "*",
+            vec![nick.to_string(), away_message.to_string()],
+        )
+    }
+    
+    /// RPL_UNAWAY
+    pub fn unaway() -> Message {
+        Self::RplUnaway.reply(
+            "*",
+            vec!["You are no longer marked as being away".to_string()],
+        )
+    }
+    
+    /// RPL_NOWAWAY
+    pub fn now_away() -> Message {
+        Self::RplNowAway.reply(
+            "*",
+            vec!["You have been marked as being away".to_string()],
+        )
+    }
+    
+    // ISON command replies
+    
+    /// RPL_ISON
+    pub fn ison(nicks: &[String]) -> Message {
+        Self::RplIson.reply(
+            "*",
+            vec![format!(":{}", nicks.join(" "))],
+        )
+    }
+    
+    // USERHOST command replies
+    
+    /// RPL_USERHOST
+    pub fn userhost(entries: &[String]) -> Message {
+        Self::RplUserhost.reply(
+            "*",
+            vec![format!(":{}", entries.join(" "))],
         )
     }
 }

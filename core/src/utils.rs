@@ -1,13 +1,12 @@
 //! Utility functions and helpers
 
 use crate::Error;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::IpAddr;
 use std::str::FromStr;
 
 /// DNS and network utilities
 pub mod dns {
     use super::*;
-    use std::net::ToSocketAddrs;
     use tokio::net::lookup_host;
     
     /// Resolve hostname to IP address
@@ -47,8 +46,6 @@ pub mod dns {
 /// Ident protocol utilities
 pub mod ident {
     use super::*;
-    use std::net::{TcpStream, SocketAddr};
-    use std::io::{Read, Write};
     use tokio::io::{AsyncWriteExt, AsyncBufReadExt};
     use std::time::Duration;
     
@@ -105,7 +102,6 @@ pub mod ident {
 
 /// String utilities
 pub mod string {
-    use super::*;
     
     /// Check if a string is a valid IRC channel name
     pub fn is_valid_channel_name(name: &str) -> bool {
@@ -182,7 +178,7 @@ pub mod string {
 
 /// Time utilities
 pub mod time {
-    use chrono::{DateTime, Utc};
+    use chrono::Utc;
     
     /// Get current timestamp as string
     pub fn current_timestamp() -> String {

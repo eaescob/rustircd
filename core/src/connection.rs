@@ -4,7 +4,7 @@ use crate::{Client, Message, Error, Result};
 use std::net::SocketAddr;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::{TcpListener, TcpStream},
+    net::TcpStream,
     sync::mpsc,
 };
 use tokio_rustls::{TlsAcceptor, TlsStream};
@@ -48,7 +48,7 @@ impl ConnectionHandler {
         let client_id = Uuid::new_v4();
         
         // Create message channel for this client
-        let (client_sender, mut client_receiver) = mpsc::unbounded_channel();
+        let (client_sender, client_receiver) = mpsc::unbounded_channel();
         
         // Create client
         let client = Client::new(
@@ -88,7 +88,7 @@ impl ConnectionHandler {
     /// Handle individual client connection
     async fn handle_client_connection(
         client_id: Uuid,
-        mut stream: Box<dyn ConnectionStream>,
+        stream: Box<dyn ConnectionStream>,
         mut client_receiver: mpsc::UnboundedReceiver<Message>,
         message_sender: mpsc::UnboundedSender<(Uuid, Message)>,
     ) -> Result<()> {
@@ -97,7 +97,7 @@ impl ConnectionHandler {
         let mut line = String::new();
         
         // Send messages to client
-        let message_sender_clone = message_sender.clone();
+        let _message_sender_clone = message_sender.clone();
         tokio::spawn(async move {
             while let Some(message) = client_receiver.recv().await {
                 if let Err(e) = write_half.write_all(message.to_string().as_bytes()).await {
@@ -230,12 +230,12 @@ pub trait ConnectionStream: Send + Sync {
 }
 
 /// Trait for connection read half
-pub trait ConnectionReadHalf: Send + Sync {
+pub trait ConnectionReadHalf: Send + Sync + tokio::io::AsyncRead + Unpin {
     // This will be implemented by tokio's AsyncRead
 }
 
 /// Trait for connection write half
-pub trait ConnectionWriteHalf: Send + Sync {
+pub trait ConnectionWriteHalf: Send + Sync + tokio::io::AsyncWrite + Unpin {
     // This will be implemented by tokio's AsyncWrite
 }
 
@@ -253,7 +253,7 @@ impl ConnectionWriteHalf for tokio::io::WriteHalf<TcpStream> {}
 // Implement traits for TlsStream
 impl<T> ConnectionStream for TlsStream<T>
 where
-    T: Send + Sync,
+    T: Send + Sync + tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + 'static,
 {
     fn split(self: Box<Self>) -> (Box<dyn ConnectionReadHalf>, Box<dyn ConnectionWriteHalf>) {
         let (read, write) = tokio::io::split(*self);
@@ -261,5 +261,23 @@ where
     }
 }
 
-impl<T> ConnectionReadHalf for tokio::io::ReadHalf<TlsStream<T>> where T: Send + Sync {}
-impl<T> ConnectionWriteHalf for tokio::io::WriteHalf<TlsStream<T>> where T: Send + Sync {}
+impl<T> ConnectionReadHalf for tokio::io::ReadHalf<TlsStream<T>> 
+where 
+    T: Send + Sync + tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + 'static
+{}
+
+impl<T> ConnectionWriteHalf for tokio::io::WriteHalf<TlsStream<T>> 
+where 
+    T: Send + Sync + tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + 'static
+{}
+
+// Implement traits for tokio_rustls::server::TlsStream
+impl ConnectionStream for tokio_rustls::server::TlsStream<tokio::net::TcpStream> {
+    fn split(self: Box<Self>) -> (Box<dyn ConnectionReadHalf>, Box<dyn ConnectionWriteHalf>) {
+        let (read, write) = tokio::io::split(*self);
+        (Box::new(read), Box::new(write))
+    }
+}
+
+impl ConnectionReadHalf for tokio::io::ReadHalf<tokio_rustls::server::TlsStream<tokio::net::TcpStream>> {}
+impl ConnectionWriteHalf for tokio::io::WriteHalf<tokio_rustls::server::TlsStream<tokio::net::TcpStream>> {}

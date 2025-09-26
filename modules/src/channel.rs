@@ -1,6 +1,6 @@
 //! Channel operations module
 
-use rustircd_core::{Module, ModuleResult, Client, Message, User, Error, Result, NumericReply};
+use rustircd_core::{Module, module::ModuleResult, Client, Message, User, Error, Result, NumericReply};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -141,14 +141,14 @@ impl Channel {
     }
     
     /// Add a member to the channel
-    pub fn add_member(&mut self, user_id: Uuid) -> Result<(), String> {
+    pub fn add_member(&mut self, user_id: Uuid) -> Result<()> {
         if self.members.contains_key(&user_id) {
-            return Err("User already in channel".to_string());
+            return Err(Error::User("User already in channel".to_string()));
         }
         
         if let Some(limit) = self.user_limit {
             if self.members.len() >= limit {
-                return Err("Channel is full".to_string());
+                return Err(Error::User("Channel is full".to_string()));
             }
         }
         
@@ -179,7 +179,7 @@ impl Channel {
     }
     
     /// Set user as operator
-    pub fn set_operator(&mut self, user_id: &Uuid, is_op: bool) -> Result<(), String> {
+    pub fn set_operator(&mut self, user_id: &Uuid, is_op: bool) -> Result<()> {
         if let Some(member) = self.members.get_mut(user_id) {
             if is_op {
                 member.add_mode('o');
@@ -188,7 +188,7 @@ impl Channel {
             }
             Ok(())
         } else {
-            Err("User not in channel".to_string())
+            Err(Error::User("User not in channel".to_string()))
         }
     }
     
@@ -248,8 +248,9 @@ impl Channel {
     
     /// Set channel key
     pub fn set_key(&mut self, key: Option<String>) {
+        let has_key = key.is_some();
         self.key = key;
-        if key.is_some() {
+        if has_key {
             self.add_mode('k');
         } else {
             self.remove_mode('k');

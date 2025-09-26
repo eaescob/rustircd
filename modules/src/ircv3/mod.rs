@@ -10,7 +10,7 @@ pub mod channel_rename;
 pub mod user_properties;
 pub mod core_integration;
 
-use rustircd_core::{Module, ModuleResult, Client, Message, User, Error, Result};
+use rustircd_core::{Module, module::ModuleResult, Client, Message, User, Error, Result};
 use async_trait::async_trait;
 use std::collections::HashSet;
 
@@ -112,7 +112,7 @@ impl Module for Ircv3Module {
     }
     
     async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ModuleResult> {
-        match message.command {
+        match &message.command {
             rustircd_core::MessageType::Cap => {
                 self.capability_negotiation.handle_cap(client, message).await?;
                 Ok(ModuleResult::Handled)

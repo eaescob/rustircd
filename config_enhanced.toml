@@ -1,0 +1,59 @@
+# Enhanced IRC Daemon Configuration
+# This configuration includes all the new database, broadcasting, and network features
+
+[server]
+name = "rustircd.example.com"
+description = "Rust IRC Daemon with Enhanced Features"
+version = "0.1.0"
+created = "2024-01-01"
+max_clients = 1000
+max_channels_per_client = 50
+
+[network]
+name = "RustNet"
+description = "A Rust-based IRC network"
+links = []
+operators = [
+    { name = "admin", password = "secret", hostmask = "*@*", privileges = ["all"] }
+]
+super_servers = [
+    { name = "hub.example.com", hostname = "hub.example.com", port = 6667, password = "linkpass", tls = false, privileges = ["all"] }
+]
+
+[connection]
+port = 6667
+tls_port = 6697
+bind_address = "0.0.0.0"
+max_connections_per_ip = 5
+connection_timeout = 300
+ping_timeout = 120
+
+[security]
+tls = true
+cert_file = "certs/server.crt"
+key_file = "certs/server.key"
+cipher_suites = ["TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256"]
+
+[modules]
+module_directory = "modules"
+enabled_modules = ["channel", "ircv3", "optional"]
+module_settings = {}
+
+# New database configuration
+[database]
+max_history_size = 10000
+history_retention_days = 30
+enable_channel_tracking = true
+enable_activity_tracking = true
+
+# New broadcasting configuration
+[broadcast]
+max_concurrent_queries = 100
+query_timeout_seconds = 30
+enable_network_queries = true
+enable_efficient_broadcasting = true
+
+[services]
+services_directory = "services"
+enabled_services = []
+service_settings = {}

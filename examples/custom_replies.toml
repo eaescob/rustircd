@@ -1,0 +1,97 @@
+# Example custom replies configuration
+# This file demonstrates how to customize IRC numeric replies
+#
+# Note: Server information (name, version, description, admin details) is now
+# configured in the main config.toml file under the [server] section.
+# This file only contains the custom reply templates.
+
+# Customize specific replies
+[replies.001]
+code = 001
+text = "Welcome to MyCustomIRCd, {nick}! You are now connected to the best IRC network around!"
+description = "RPL_WELCOME - Custom welcome message"
+
+[replies.002]
+code = 002
+text = "Your host is {server_name}, running version {server_version} - the most advanced IRC daemon!"
+description = "RPL_YOURHOST - Custom host information"
+
+[replies.003]
+code = 003
+text = "This server was created on {server_created} and has been running smoothly ever since!"
+description = "RPL_CREATED - Custom creation message"
+
+[replies.311]
+code = 311
+text = "{nick} {user} {host} * :{realname} (Last seen: {last_seen})"
+description = "RPL_WHOISUSER - Custom WHOIS user info with last seen"
+
+[replies.312]
+code = 312
+text = "{nick} {server_name} :{server_description} - Powered by Rust!"
+description = "RPL_WHOISSERVER - Custom WHOIS server info"
+
+[replies.313]
+code = 313
+text = "{nick} :is a super awesome IRC operator! 🚀"
+description = "RPL_WHOISOPERATOR - Custom operator message with emoji"
+
+[replies.331]
+code = 331
+text = "{channel} :No topic is set (but you could set one!)"
+description = "RPL_NOTOPIC - Custom no topic message"
+
+[replies.332]
+code = 332
+text = "{channel} :{topic} (Set by {setter} on {date})"
+description = "RPL_TOPIC - Custom topic with metadata"
+
+[replies.401]
+code = 401
+text = "{nick} :Sorry, I couldn't find that nick/channel anywhere! 🤔"
+description = "ERR_NOSUCHNICK - Custom error with emoji"
+
+[replies.403]
+code = 403
+text = "{channel} :That channel doesn't exist yet! Want to create it? Use /join {channel}"
+description = "ERR_NOSUCHCHANNEL - Helpful error message"
+
+[replies.433]
+code = 433
+text = "{nick} :That nickname is already taken! Try {nick}_ or {nick}2"
+description = "ERR_NICKNAMEINUSE - Helpful nickname suggestion"
+
+[replies.471]
+code = 471
+text = "{channel} :Sorry, this channel is full! (Limit: {limit} users)"
+description = "ERR_CHANNELISFULL - Custom full channel message"
+
+[replies.473]
+code = 473
+text = "{channel} :This is an invite-only channel! Ask an operator for an invite."
+description = "ERR_INVITEONLYCHAN - Helpful invite-only message"
+
+[replies.474]
+code = 474
+text = "{channel} :You're banned from this channel! Contact an operator if you think this is an error."
+description = "ERR_BANNEDFROMCHAN - Custom ban message"
+
+[replies.475]
+code = 475
+text = "{channel} :This channel requires a password! Use /join {channel} <password>"
+description = "ERR_BADCHANNELKEY - Helpful key message"
+
+[replies.381]
+code = 381
+text = ":Congratulations! You are now a super awesome IRC operator! 🎉"
+description = "RPL_YOUREOPER - Custom operator success message"
+
+[replies.200]
+code = 200
+text = "Successfully connected to {server}! 🚀"
+description = "RPL_CONNECTSUCCESS - Custom connect success"
+
+[replies.201]
+code = 201
+text = "Failed to connect to {server}. Please try again later. 😞"
+description = "RPL_CONNECTFAILED - Custom connect failure"

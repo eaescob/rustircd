@@ -1,6 +1,6 @@
 //! IRCv3 Away Notification
 
-use rustircd_core::{User, Error, Result};
+use rustircd_core::{User, Result};
 use std::collections::HashMap;
 use uuid::Uuid;
 

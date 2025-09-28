@@ -1,6 +1,6 @@
 //! Network-wide query system for IRC daemon
 
-use crate::{User, Error, Result, Database, ServerInfo};
+use crate::{User, Error, Result, Database, DatabaseServerInfo as ServerInfo};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -361,7 +361,7 @@ impl NetworkMessageHandler {
         Ok(())
     }
 
-    async fn handle_user_quit(&self, nickname: String, reason: Option<String>, server: String) -> Result<()> {
+    async fn handle_user_quit(&self, nickname: String, _reason: Option<String>, _server: String) -> Result<()> {
         // Remove user from database
         if let Some(user) = self.database.get_user_by_nick(&nickname) {
             self.database.remove_user(user.id)?;
@@ -369,26 +369,26 @@ impl NetworkMessageHandler {
         Ok(())
     }
 
-    async fn handle_user_join(&self, nickname: String, channel: String, server: String) -> Result<()> {
+    async fn handle_user_join(&self, nickname: String, channel: String, _server: String) -> Result<()> {
         // Add user to channel
         self.database.add_user_to_channel(&nickname, &channel)?;
         Ok(())
     }
 
-    async fn handle_user_part(&self, nickname: String, channel: String, reason: Option<String>, server: String) -> Result<()> {
+    async fn handle_user_part(&self, nickname: String, channel: String, _reason: Option<String>, _server: String) -> Result<()> {
         // Remove user from channel
         self.database.remove_user_from_channel(&nickname, &channel)?;
         Ok(())
     }
 
-    async fn handle_channel_message(&self, nickname: String, channel: String, message: String, server: String) -> Result<()> {
+    async fn handle_channel_message(&self, nickname: String, channel: String, message: String, _server: String) -> Result<()> {
         // Forward channel message to local users in channel
         // This would integrate with the broadcast system
         tracing::debug!("Channel message from {} in {}: {}", nickname, channel, message);
         Ok(())
     }
 
-    async fn handle_private_message(&self, from_nick: String, to_nick: String, message: String, server: String) -> Result<()> {
+    async fn handle_private_message(&self, from_nick: String, to_nick: String, message: String, _server: String) -> Result<()> {
         // Forward private message to local user
         tracing::debug!("Private message from {} to {}: {}", from_nick, to_nick, message);
         Ok(())
@@ -400,7 +400,7 @@ impl NetworkMessageHandler {
         Ok(())
     }
 
-    async fn handle_server_quit(&self, server: String, reason: Option<String>) -> Result<()> {
+    async fn handle_server_quit(&self, server: String, _reason: Option<String>) -> Result<()> {
         // Remove server from database
         self.database.remove_server(&server);
         Ok(())
@@ -409,7 +409,7 @@ impl NetworkMessageHandler {
     async fn handle_network_query(&self, query: NetworkQuery, from_server: String) -> Result<()> {
         // Process network query and send response
         match query {
-            NetworkQuery::Who { pattern, requestor, request_id } => {
+            NetworkQuery::Who { pattern, requestor: _, request_id } => {
                 let users = self.database.search_users(&pattern);
                 let response = NetworkResponse::WhoResponse {
                     request_id,
@@ -419,7 +419,7 @@ impl NetworkMessageHandler {
                 // Send response back to requesting server
                 self.send_network_response(response, from_server).await?;
             }
-            NetworkQuery::Whois { nickname, requestor, request_id } => {
+            NetworkQuery::Whois { nickname, requestor: _, request_id } => {
                 let user = self.database.get_user_by_nick(&nickname);
                 let response = NetworkResponse::WhoisResponse {
                     request_id,
@@ -428,7 +428,7 @@ impl NetworkMessageHandler {
                 };
                 self.send_network_response(response, from_server).await?;
             }
-            NetworkQuery::Whowas { nickname, requestor, request_id } => {
+            NetworkQuery::Whowas { nickname, requestor: _, request_id } => {
                 let users = self.database.get_user_history(&nickname).await;
                 let response = NetworkResponse::WhowasResponse {
                     request_id,
@@ -437,7 +437,7 @@ impl NetworkMessageHandler {
                 };
                 self.send_network_response(response, from_server).await?;
             }
-            NetworkQuery::UserCount { requestor, request_id } => {
+            NetworkQuery::UserCount { requestor: _, request_id } => {
                 let count = self.database.user_count() as u32;
                 let response = NetworkResponse::UserCountResponse {
                     request_id,
@@ -446,7 +446,7 @@ impl NetworkMessageHandler {
                 };
                 self.send_network_response(response, from_server).await?;
             }
-            NetworkQuery::ServerList { requestor, request_id } => {
+            NetworkQuery::ServerList { requestor: _, request_id } => {
                 let servers = self.database.get_all_servers();
                 let response = NetworkResponse::ServerListResponse {
                     request_id,
@@ -459,7 +459,7 @@ impl NetworkMessageHandler {
         Ok(())
     }
 
-    async fn handle_network_response(&self, response: NetworkResponse, from_server: String) -> Result<()> {
+    async fn handle_network_response(&self, response: NetworkResponse, _from_server: String) -> Result<()> {
         // Handle network response
         self.query_manager.handle_response(response).await?;
         Ok(())

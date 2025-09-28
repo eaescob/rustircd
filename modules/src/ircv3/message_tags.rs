@@ -51,7 +51,7 @@ impl MessageTags {
         let target = &message.params[0];
         
         // Process message tags
-        if let Some(ref prefix) = message.prefix {
+        if let Some(ref _prefix) = message.prefix {
             // Extract tags from prefix if present
             // TODO: Parse and validate message tags
             tracing::info!("Client {} sent TAGMSG to {} with tags", client.id, target);
@@ -114,13 +114,13 @@ impl MessageTags {
     }
     
     /// Add a message tag to a message
-    pub fn add_tag(message: &mut Message, key: &str, value: &str) {
+    pub fn add_tag(_message: &mut Message, key: &str, value: &str) {
         // TODO: Implement adding tags to messages
         tracing::debug!("Adding tag {}={} to message", key, value);
     }
     
     /// Remove a message tag from a message
-    pub fn remove_tag(message: &mut Message, key: &str) {
+    pub fn remove_tag(_message: &mut Message, key: &str) {
         // TODO: Implement removing tags from messages
         tracing::debug!("Removing tag {} from message", key);
     }

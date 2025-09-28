@@ -1,10 +1,8 @@
 //! Services framework for IRC daemon
 
-use rustircd_core::{Client, Message, User, Error, Result};
+use rustircd_core::{Client, Message, User, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Service trait that all services must implement
 #[async_trait]

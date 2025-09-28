@@ -213,7 +213,7 @@ impl Message {
             return Err(crate::Error::MessageParse("Empty message".to_string()));
         }
         
-        let mut parts = input.split_whitespace().collect::<Vec<_>>();
+        let parts = input.split_whitespace().collect::<Vec<_>>();
         if parts.is_empty() {
             return Err(crate::Error::MessageParse("No command found".to_string()));
         }

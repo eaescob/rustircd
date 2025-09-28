@@ -1,6 +1,6 @@
 //! IRCv3 Batch Messages
 
-use rustircd_core::{Client, Message, Error, Result};
+use rustircd_core::{Message, Error, Result};
 use std::collections::HashMap;
 use uuid::Uuid;
 

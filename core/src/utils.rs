@@ -212,7 +212,7 @@ pub mod time {
 /// Network utilities
 pub mod network {
     use super::*;
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use std::net::IpAddr;
     
     /// Check if an IP address is private
     pub fn is_private_ip(ip: IpAddr) -> bool {

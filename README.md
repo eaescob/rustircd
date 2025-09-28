@@ -10,6 +10,7 @@ A modular IRC daemon implementation in Rust based on RFC 1459 and IRCv3 specific
 - **TLS/SSL Support**: Secure connections with TLS encryption
 - **Dynamic Module Loading**: Load and unload modules at runtime
 - **Services Framework**: Extensible framework for network-specific services
+- **Configurable Replies**: Customize IRC numeric replies with placeholders and personalization
 - **High Performance**: Built with async Rust for excellent performance
 
 ## Architecture
@@ -88,6 +89,35 @@ The daemon supports super servers (u-lined servers) which have elevated privileg
 - Messages from super servers are handled with special privileges
 - Useful for services, bots, and administrative tools
 
+## Configurable Replies
+
+RustIRCd supports customizable IRC numeric replies, allowing server administrators to personalize messages while maintaining RFC 1459 compliance:
+
+### Features
+- **Template System**: Use placeholders like `{nick}`, `{server_name}`, `{channel}` for dynamic content
+- **Complete Coverage**: All 100+ RFC 1459 numeric replies can be customized
+- **Fallback Safety**: Gracefully falls back to defaults for missing replies
+- **Easy Configuration**: Simple TOML format with comprehensive examples
+
+### Quick Start
+1. Create a `replies.toml` file in your server directory
+2. Customize any numeric reply:
+```toml
+[replies.001]
+code = 001
+text = "Welcome to {server_name}, {nick}! You are now connected! 🚀"
+description = "RPL_WELCOME - Custom welcome message"
+```
+3. Restart the server to load custom replies
+
+### Available Placeholders
+- **Server**: `{server_name}`, `{server_version}`, `{server_description}`
+- **User**: `{nick}`, `{user}`, `{host}`, `{realname}`, `{target}`
+- **Channel**: `{channel}`, `{topic}`, `{reason}`, `{count}`, `{info}`
+- **Custom**: `{param0}`, `{param1}`, etc.
+
+See `CONFIGURABLE_REPLIES.md` for complete documentation and examples.
+
 ## Installation
 
 1. Clone the repository:
@@ -124,6 +154,27 @@ The daemon uses TOML configuration files. A default configuration is generated w
 cargo run -- config
 ```
 
+### Configuration Files
+
+- **`config.toml`**: Main server configuration
+- **`replies.toml`**: Optional custom numeric replies (auto-loaded if present)
+
+### Multi-Port Configuration
+
+The daemon supports listening on multiple ports simultaneously, each with different configurations:
+
+- **Port Types**: Each port can be configured for `Client`, `Server`, or `Both` connection types
+- **TLS Support**: Individual ports can have TLS enabled or disabled
+- **Flexible Setup**: Mix and match secure and non-secure ports as needed
+- **Connection Limits**: Global limits apply across all ports
+
+#### Port Configuration Options
+
+- `port`: The port number to listen on
+- `connection_type`: Type of connections allowed (`Client`, `Server`, or `Both`)
+- `tls`: Whether to use TLS encryption for this port
+- `description`: Optional description for documentation purposes
+
 ### Basic Configuration
 
 ```toml
@@ -135,17 +186,43 @@ max_clients = 1000
 max_channels_per_client = 10
 
 [connection]
-client_port = 6667
-server_port = 6668
-client_tls_port = 6697
 bind_address = "0.0.0.0"
+connection_timeout = 60
+ping_timeout = 300
+max_connections_per_ip = 5
+max_connections_per_host = 10
+
+# Configure multiple ports with different connection types and TLS settings
+[[connection.ports]]
+port = 6667
+connection_type = "Client"
+tls = false
+description = "Standard IRC port"
+
+[[connection.ports]]
+port = 6668
+connection_type = "Server"
+tls = false
+description = "Server-to-server connections"
+
+[[connection.ports]]
+port = 6697
+connection_type = "Client"
+tls = true
+description = "Secure IRC port"
+
+[[connection.ports]]
+port = 6698
+connection_type = "Server"
+tls = true
+description = "Secure server-to-server connections"
 
 [security]
 require_client_password = false
 enable_ident = true
 enable_dns = true
 
-[tls]
+[security.tls]
 enabled = false
 cert_file = "cert.pem"
 key_file = "key.pem"

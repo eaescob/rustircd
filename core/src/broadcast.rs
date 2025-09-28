@@ -224,7 +224,7 @@ impl BroadcastSystem {
             BroadcastTarget::Operators => {
                 // Find all operator users
                 Ok(self.client_connections.iter()
-                    .filter(|entry| {
+                    .filter(|_entry| {
                         // This would need access to the database to check operator status
                         // For now, we'll return all users
                         true
@@ -232,10 +232,10 @@ impl BroadcastSystem {
                     .map(|entry| *entry.key())
                     .collect())
             }
-            BroadcastTarget::Pattern(pattern) => {
+            BroadcastTarget::Pattern(_pattern) => {
                 // Find users matching pattern
                 Ok(self.client_connections.iter()
-                    .filter(|entry| {
+                    .filter(|_entry| {
                         // This would need pattern matching against nicknames
                         // For now, we'll return all users
                         true
@@ -360,7 +360,7 @@ pub struct MessageBuilder;
 
 impl MessageBuilder {
     /// Create a PRIVMSG message
-    pub fn privmsg(target: &str, message: &str, sender: &User) -> Message {
+    pub fn privmsg(target: &str, message: &str, _sender: &User) -> Message {
         use crate::MessageType;
         Message::new(
             MessageType::PrivMsg,
@@ -369,7 +369,7 @@ impl MessageBuilder {
     }
 
     /// Create a NOTICE message
-    pub fn notice(target: &str, message: &str, sender: &User) -> Message {
+    pub fn notice(target: &str, message: &str, _sender: &User) -> Message {
         use crate::MessageType;
         Message::new(
             MessageType::Notice,
@@ -378,7 +378,7 @@ impl MessageBuilder {
     }
 
     /// Create a JOIN message
-    pub fn join(channel: &str, sender: &User) -> Message {
+    pub fn join(channel: &str, _sender: &User) -> Message {
         use crate::MessageType;
         Message::new(
             MessageType::Join,
@@ -387,7 +387,7 @@ impl MessageBuilder {
     }
 
     /// Create a PART message
-    pub fn part(channel: &str, reason: Option<&str>, sender: &User) -> Message {
+    pub fn part(channel: &str, reason: Option<&str>, _sender: &User) -> Message {
         use crate::MessageType;
         let mut params = vec![channel.to_string()];
         if let Some(reason) = reason {
@@ -397,7 +397,7 @@ impl MessageBuilder {
     }
 
     /// Create a QUIT message
-    pub fn quit(reason: Option<&str>, sender: &User) -> Message {
+    pub fn quit(reason: Option<&str>, _sender: &User) -> Message {
         use crate::MessageType;
         let params = if let Some(reason) = reason {
             vec![reason.to_string()]

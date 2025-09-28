@@ -1,6 +1,6 @@
 //! IRCv3 Changing User Properties
 
-use rustircd_core::{User, Error, Result};
+use rustircd_core::{Error, Result};
 use std::collections::HashMap;
 use uuid::Uuid;
 

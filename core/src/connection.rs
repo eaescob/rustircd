@@ -37,12 +37,14 @@ impl ConnectionHandler {
         (handler, message_sender)
     }
     
-    /// Handle a new client connection
-    pub async fn handle_connection(
+    /// Handle a new connection with type information
+    pub async fn handle_connection_with_type(
         &mut self,
         stream: TcpStream,
         remote_addr: SocketAddr,
         tls_acceptor: Option<TlsAcceptor>,
+        is_client_connection: bool,
+        is_server_connection: bool,
     ) -> Result<()> {
         let local_addr = stream.local_addr()?;
         let client_id = Uuid::new_v4();
@@ -50,12 +52,20 @@ impl ConnectionHandler {
         // Create message channel for this client
         let (client_sender, client_receiver) = mpsc::unbounded_channel();
         
+        // Determine connection type
+        let connection_type = if is_server_connection && !is_client_connection {
+            crate::client::ConnectionType::Server
+        } else {
+            crate::client::ConnectionType::Client
+        };
+        
         // Create client
-        let client = Client::new(
+        let client = Client::new_with_type(
             client_id,
             remote_addr.to_string(),
             local_addr.to_string(),
             client_sender,
+            connection_type,
         );
         
         // Store client
@@ -63,14 +73,18 @@ impl ConnectionHandler {
         
         // Handle TLS if acceptor is provided
         let stream = if let Some(acceptor) = tls_acceptor {
-            let tls_stream = acceptor.accept(stream).await?;
+            tracing::debug!("Upgrading connection to TLS for client {}", client_id);
+            let tls_stream = acceptor.accept(stream).await
+                .map_err(|e| Error::Connection(format!("TLS handshake failed: {}", e)))?;
             Box::new(tls_stream) as Box<dyn ConnectionStream>
         } else {
             Box::new(stream) as Box<dyn ConnectionStream>
         };
         
-        // Spawn connection handler task
+        // Spawn connection handler
+        let client_id = client_id;
         let message_sender = self.message_sender.clone();
+        
         tokio::spawn(async move {
             if let Err(e) = Self::handle_client_connection(
                 client_id,
@@ -78,11 +92,21 @@ impl ConnectionHandler {
                 client_receiver,
                 message_sender,
             ).await {
-                tracing::error!("Error handling client connection {}: {}", client_id, e);
+                tracing::error!("Error handling client connection: {}", e);
             }
         });
         
         Ok(())
+    }
+    
+    /// Handle a new client connection (legacy method for backward compatibility)
+    pub async fn handle_connection(
+        &mut self,
+        stream: TcpStream,
+        remote_addr: SocketAddr,
+        tls_acceptor: Option<TlsAcceptor>,
+    ) -> Result<()> {
+        self.handle_connection_with_type(stream, remote_addr, tls_acceptor, true, false).await
     }
     
     /// Handle individual client connection

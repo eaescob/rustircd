@@ -4,6 +4,15 @@ use crate::{Message, User, Error, Result};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+/// Type of connection
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConnectionType {
+    /// Client connection
+    Client,
+    /// Server connection
+    Server,
+}
+
 /// Client connection state
 #[derive(Debug, Clone)]
 pub enum ClientState {
@@ -42,6 +51,8 @@ pub struct Client {
     pub capabilities: std::collections::HashSet<String>,
     /// Whether client supports IRCv3
     pub supports_ircv3: bool,
+    /// Type of connection (client or server)
+    pub connection_type: ConnectionType,
 }
 
 impl Client {
@@ -51,6 +62,17 @@ impl Client {
         remote_addr: String,
         local_addr: String,
         sender: mpsc::UnboundedSender<Message>,
+    ) -> Self {
+        Self::new_with_type(id, remote_addr, local_addr, sender, ConnectionType::Client)
+    }
+    
+    /// Create a new client with specific connection type
+    pub fn new_with_type(
+        id: Uuid,
+        remote_addr: String,
+        local_addr: String,
+        sender: mpsc::UnboundedSender<Message>,
+        connection_type: ConnectionType,
     ) -> Self {
         Self {
             id,
@@ -62,6 +84,7 @@ impl Client {
             encrypted: false,
             capabilities: std::collections::HashSet::new(),
             supports_ircv3: false,
+            connection_type,
         }
     }
     

@@ -4,7 +4,7 @@
 //! capabilities with the core extension system.
 
 use rustircd_core::{
-    User, Message, Client, Error, Result, MessageType, NumericReply,
+    User, Message, Client, Error, Result, MessageType,
     extensions::{UserExtension, MessageExtension, CapabilityExtension, MessageTagExtension, CapabilityAction, CapabilityResult},
     module::ModuleResult,
 };
@@ -77,36 +77,36 @@ impl AwayNotificationIntegration {
 
 #[async_trait]
 impl UserExtension for AwayNotificationIntegration {
-    async fn on_user_registration(&self, user: &User) -> Result<()> {
+    async fn on_user_registration(&self, _user: &User) -> Result<()> {
         // Notify about user registration
         Ok(())
     }
     
-    async fn on_user_disconnection(&self, user: &User) -> Result<()> {
+    async fn on_user_disconnection(&self, _user: &User) -> Result<()> {
         // Notify about user disconnection
         Ok(())
     }
     
-    async fn on_user_property_change(&self, user: &User, property: &str, old_value: &str, new_value: &str) -> Result<()> {
+    async fn on_user_property_change(&self, user: &User, property: &str, _old_value: &str, _new_value: &str) -> Result<()> {
         if property == "away" {
             // Notify about away status change
             tracing::debug!("Away notification: User {} away status changed", user.nick);
         }
         Ok(())
     }
-    
-    async fn on_user_join_channel(&self, user: &User, channel: &str) -> Result<()> {
+
+    async fn on_user_join_channel(&self, _user: &User, _channel: &str) -> Result<()> {
         Ok(())
     }
-    
-    async fn on_user_part_channel(&self, user: &User, channel: &str, reason: Option<&str>) -> Result<()> {
+
+    async fn on_user_part_channel(&self, _user: &User, _channel: &str, _reason: Option<&str>) -> Result<()> {
         Ok(())
     }
-    
-    async fn on_user_nick_change(&self, user: &User, old_nick: &str, new_nick: &str) -> Result<()> {
+
+    async fn on_user_nick_change(&self, _user: &User, _old_nick: &str, _new_nick: &str) -> Result<()> {
         Ok(())
     }
-    
+
     async fn on_user_away_change(&self, user: &User, away: bool, message: Option<&str>) -> Result<()> {
         // Broadcast away status change to interested users
         tracing::debug!("Away notification: User {} away status: {} (message: {:?})", user.nick, away, message);
@@ -127,7 +127,7 @@ impl MessageTagsIntegration {
 
 #[async_trait]
 impl MessageTagExtension for MessageTagsIntegration {
-    async fn process_incoming_tags(&self, client: &Client, tags: &HashMap<String, String>) -> Result<HashMap<String, String>> {
+    async fn process_incoming_tags(&self, _client: &Client, tags: &HashMap<String, String>) -> Result<HashMap<String, String>> {
         let mut processed_tags = tags.clone();
         
         // Add server-time tag if not present
@@ -146,25 +146,25 @@ impl MessageTagExtension for MessageTagsIntegration {
         Ok(processed_tags)
     }
     
-    async fn generate_outgoing_tags(&self, sender: &User, message: &Message) -> Result<HashMap<String, String>> {
+    async fn generate_outgoing_tags(&self, sender: &User, _message: &Message) -> Result<HashMap<String, String>> {
         let mut tags = HashMap::new();
-        
+
         // Add server-time tag
         tags.insert("time".to_string(), Utc::now().to_rfc3339());
-        
+
         // Add account tag if user has account
         // This would be integrated with account system
-        
+
         // Add bot tag if user is a bot
         if sender.is_bot() {
             tags.insert("bot".to_string(), "bot".to_string());
         }
-        
+
         // Add away tag if user is away
         if sender.is_away() {
             tags.insert("away".to_string(), "1".to_string());
         }
-        
+
         Ok(tags)
     }
     
@@ -244,12 +244,12 @@ impl CapabilityExtension for CapabilityNegotiationIntegration {
     fn get_capabilities(&self) -> Vec<String> {
         self.supported_capabilities.clone()
     }
-    
+
     fn supports_capability(&self, capability: &str) -> bool {
         self.supported_capabilities.contains(&capability.to_string())
     }
-    
-    async fn handle_capability_negotiation(&self, client: &Client, capability: &str, action: CapabilityAction) -> Result<CapabilityResult> {
+
+    async fn handle_capability_negotiation(&self, _client: &Client, capability: &str, action: CapabilityAction) -> Result<CapabilityResult> {
         match action {
             CapabilityAction::List => {
                 if self.supports_capability(capability) {
@@ -279,12 +279,12 @@ impl CapabilityExtension for CapabilityNegotiationIntegration {
         }
     }
     
-    async fn on_capabilities_enabled(&self, client: &Client, capabilities: &[String]) -> Result<()> {
+    async fn on_capabilities_enabled(&self, _client: &Client, capabilities: &[String]) -> Result<()> {
         tracing::debug!("Capabilities enabled for client: {:?}", capabilities);
         Ok(())
     }
-    
-    async fn on_capabilities_disabled(&self, client: &Client, capabilities: &[String]) -> Result<()> {
+
+    async fn on_capabilities_disabled(&self, _client: &Client, capabilities: &[String]) -> Result<()> {
         tracing::debug!("Capabilities disabled for client: {:?}", capabilities);
         Ok(())
     }
@@ -303,7 +303,7 @@ impl EchoMessageIntegration {
 
 #[async_trait]
 impl MessageExtension for EchoMessageIntegration {
-    async fn on_message_preprocess(&self, client: &Client, message: &Message) -> Result<Option<Message>> {
+    async fn on_message_preprocess(&self, _client: &Client, message: &Message) -> Result<Option<Message>> {
         // Echo back certain message types if echo-message capability is enabled
         match message.command {
             MessageType::PrivMsg | MessageType::Notice => {
@@ -314,16 +314,16 @@ impl MessageExtension for EchoMessageIntegration {
             _ => Ok(Some(message.clone()))
         }
     }
-    
-    async fn on_message_postprocess(&self, client: &Client, message: &Message, result: &ModuleResult) -> Result<()> {
+
+    async fn on_message_postprocess(&self, _client: &Client, _message: &Message, _result: &ModuleResult) -> Result<()> {
         Ok(())
     }
-    
-    async fn on_message_send(&self, target_user: &User, message: &Message) -> Result<Option<Message>> {
+
+    async fn on_message_send(&self, _target_user: &User, message: &Message) -> Result<Option<Message>> {
         Ok(Some(message.clone()))
     }
-    
-    async fn on_message_broadcast(&self, message: &Message, targets: &[Uuid]) -> Result<Option<Message>> {
+
+    async fn on_message_broadcast(&self, message: &Message, _targets: &[Uuid]) -> Result<Option<Message>> {
         Ok(Some(message.clone()))
     }
 }
@@ -341,21 +341,21 @@ impl ServerTimeIntegration {
 
 #[async_trait]
 impl MessageTagExtension for ServerTimeIntegration {
-    async fn process_incoming_tags(&self, client: &Client, tags: &HashMap<String, String>) -> Result<HashMap<String, String>> {
+    async fn process_incoming_tags(&self, _client: &Client, tags: &HashMap<String, String>) -> Result<HashMap<String, String>> {
         let mut processed_tags = tags.clone();
-        
+
         // Always add server-time tag
         processed_tags.insert("time".to_string(), Utc::now().to_rfc3339());
-        
+
         Ok(processed_tags)
     }
-    
-    async fn generate_outgoing_tags(&self, sender: &User, message: &Message) -> Result<HashMap<String, String>> {
+
+    async fn generate_outgoing_tags(&self, _sender: &User, _message: &Message) -> Result<HashMap<String, String>> {
         let mut tags = HashMap::new();
-        
+
         // Add server-time tag to all outgoing messages
         tags.insert("time".to_string(), Utc::now().to_rfc3339());
-        
+
         Ok(tags)
     }
     
@@ -388,30 +388,30 @@ impl UserExtension for UserPropertiesIntegration {
         tracing::debug!("User properties: User {} registered", user.nick);
         Ok(())
     }
-    
+
     async fn on_user_disconnection(&self, user: &User) -> Result<()> {
         tracing::debug!("User properties: User {} disconnected", user.nick);
         Ok(())
     }
-    
+
     async fn on_user_property_change(&self, user: &User, property: &str, old_value: &str, new_value: &str) -> Result<()> {
         tracing::debug!("User properties: User {} changed {} from {} to {}", user.nick, property, old_value, new_value);
         Ok(())
     }
-    
-    async fn on_user_join_channel(&self, user: &User, channel: &str) -> Result<()> {
+
+    async fn on_user_join_channel(&self, _user: &User, _channel: &str) -> Result<()> {
         Ok(())
     }
-    
-    async fn on_user_part_channel(&self, user: &User, channel: &str, reason: Option<&str>) -> Result<()> {
+
+    async fn on_user_part_channel(&self, _user: &User, _channel: &str, _reason: Option<&str>) -> Result<()> {
         Ok(())
     }
-    
-    async fn on_user_nick_change(&self, user: &User, old_nick: &str, new_nick: &str) -> Result<()> {
+
+    async fn on_user_nick_change(&self, _user: &User, _old_nick: &str, _new_nick: &str) -> Result<()> {
         Ok(())
     }
-    
-    async fn on_user_away_change(&self, user: &User, away: bool, message: Option<&str>) -> Result<()> {
+
+    async fn on_user_away_change(&self, _user: &User, _away: bool, _message: Option<&str>) -> Result<()> {
         Ok(())
     }
 }
@@ -429,7 +429,7 @@ impl BatchIntegration {
 
 #[async_trait]
 impl MessageExtension for BatchIntegration {
-    async fn on_message_preprocess(&self, client: &Client, message: &Message) -> Result<Option<Message>> {
+    async fn on_message_preprocess(&self, _client: &Client, message: &Message) -> Result<Option<Message>> {
         // Handle batch messages
         if let MessageType::Custom(cmd) = &message.command {
             if cmd == "BATCH" {
@@ -437,19 +437,19 @@ impl MessageExtension for BatchIntegration {
                 tracing::debug!("Batch message received: {:?}", message);
             }
         }
-        
+
         Ok(Some(message.clone()))
     }
-    
-    async fn on_message_postprocess(&self, client: &Client, message: &Message, result: &ModuleResult) -> Result<()> {
+
+    async fn on_message_postprocess(&self, _client: &Client, _message: &Message, _result: &ModuleResult) -> Result<()> {
         Ok(())
     }
-    
-    async fn on_message_send(&self, target_user: &User, message: &Message) -> Result<Option<Message>> {
+
+    async fn on_message_send(&self, _target_user: &User, message: &Message) -> Result<Option<Message>> {
         Ok(Some(message.clone()))
     }
-    
-    async fn on_message_broadcast(&self, message: &Message, targets: &[Uuid]) -> Result<Option<Message>> {
+
+    async fn on_message_broadcast(&self, message: &Message, _targets: &[Uuid]) -> Result<Option<Message>> {
         Ok(Some(message.clone()))
     }
 }

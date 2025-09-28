@@ -2,18 +2,20 @@
 
 use crate::{
     User, Message, MessageType, NumericReply, Config, ModuleManager,
-    connection::ConnectionHandler, Error, Result, module::ModuleResult, client::ClientState,
+    connection::ConnectionHandler, Error, Result, module::ModuleResult, client::{Client, ClientState},
     Database, BroadcastSystem, NetworkQueryManager, NetworkMessageHandler, ExtensionManager,
-    Prefix,
+    ServerConnectionManager, ServerConnection, Prefix,
 };
 use chrono::Utc;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use rustls::{ServerConfig, Certificate, PrivateKey};
 use std::io::BufReader;
+use uuid::Uuid;
+use tokio::io::{AsyncWriteExt, AsyncBufReadExt};
 
 /// Main IRC server
 pub struct Server {
@@ -39,11 +41,44 @@ pub struct Server {
     network_message_handler: Arc<NetworkMessageHandler>,
     /// Extension manager for IRCv3 capabilities
     extension_manager: Arc<ExtensionManager>,
+    /// Server connection manager
+    server_connections: Arc<ServerConnectionManager>,
     /// TLS acceptor (if enabled)
     tls_acceptor: Option<TlsAcceptor>,
+    /// Replies configuration
+    replies_config: Option<crate::RepliesConfig>,
 }
 
 impl Server {
+    /// Create a numeric reply using configurable replies if available
+    fn create_numeric_reply(&self, reply: NumericReply, target: &str, params: Vec<String>) -> Message {
+        if let Some(ref replies_config) = self.replies_config {
+            let mut param_map = std::collections::HashMap::new();
+            // Add common parameters
+            param_map.insert("nick".to_string(), target.to_string());
+            
+            // Add custom parameters from the params vector
+            for (i, param) in params.iter().enumerate() {
+                param_map.insert(format!("param{}", i), param.clone());
+            }
+            
+            // Create server info from main config
+            let server_info = crate::RepliesServerInfo {
+                name: self.config.server.name.clone(),
+                version: self.config.server.version.clone(),
+                description: self.config.server.description.clone(),
+                created: self.config.server.created.clone(),
+                admin_email: self.config.server.admin_email.clone(),
+                admin_location1: self.config.server.admin_location1.clone(),
+                admin_location2: self.config.server.admin_location2.clone(),
+            };
+            
+            reply.reply_with_config(target, &param_map, replies_config, &server_info)
+        } else {
+            reply.reply(target, params)
+        }
+    }
+
     /// Create a new server instance
     pub fn new(config: Config) -> Self {
         let (connection_handler, _) = ConnectionHandler::new();
@@ -72,8 +107,11 @@ impl Server {
         // Initialize extension manager
         let extension_manager = Arc::new(ExtensionManager::new());
         
+        // Initialize server connection manager
+        let server_connections = Arc::new(ServerConnectionManager::new(Arc::new(config.clone())));
+        
         Self {
-            config,
+            config: config.clone(),
             module_manager: Arc::new(RwLock::new(ModuleManager::new())),
             connection_handler: Arc::new(RwLock::new(connection_handler)),
             users: Arc::new(RwLock::new(HashMap::new())),
@@ -84,7 +122,9 @@ impl Server {
             network_query_manager,
             network_message_handler,
             extension_manager,
+            server_connections,
             tls_acceptor: None,
+            replies_config: config.replies.clone(),
         }
     }
     
@@ -178,38 +218,12 @@ impl Server {
     
     /// Start the server
     pub async fn start(&mut self) -> Result<()> {
-        tracing::info!("Starting IRC server on {}:{}", 
-                      self.config.connection.bind_address, 
-                      self.config.connection.client_port);
+        tracing::info!("Starting IRC server with {} configured ports", 
+                      self.config.connection.ports.len());
         
-        // Start client listener
-        let client_listener = TcpListener::bind(
-            format!("{}:{}", self.config.connection.bind_address, self.config.connection.client_port)
-        ).await?;
-        
-        let tls_acceptor = self.tls_acceptor.clone();
-        let connection_handler = self.connection_handler.clone();
-        
-        // Spawn client connection handler
-        tokio::spawn(async move {
-            loop {
-                match client_listener.accept().await {
-                    Ok((stream, addr)) => {
-                        let mut conn_handler = connection_handler.write().await;
-                        if let Err(e) = conn_handler.handle_connection(stream, addr, tls_acceptor.clone()).await {
-                            tracing::error!("Error handling client connection: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Error accepting client connection: {}", e);
-                    }
-                }
-            }
-        });
-        
-        // Start server listener if configured
-        if self.config.connection.server_port != 0 {
-            self.start_server_listener().await?;
+        // Start listeners for all configured ports
+        for port_config in &self.config.connection.ports {
+            self.start_port_listener(port_config).await?;
         }
         
         // Start message processing loop
@@ -218,24 +232,52 @@ impl Server {
         Ok(())
     }
     
-    /// Start server listener for server-to-server connections
-    async fn start_server_listener(&self) -> Result<()> {
-        let _server_listener = TcpListener::bind(
-            format!("{}:{}", self.config.connection.bind_address, self.config.connection.server_port)
+    /// Start a listener for a specific port configuration
+    async fn start_port_listener(&self, port_config: &crate::config::PortConfig) -> Result<()> {
+        let listener = TcpListener::bind(
+            format!("{}:{}", self.config.connection.bind_address, port_config.port)
         ).await?;
         
-        tracing::info!("Server listener started on port {}", self.config.connection.server_port);
+        let port = port_config.port;
+        let connection_type = port_config.connection_type.clone();
+        let tls_enabled = port_config.tls;
+        let tls_acceptor = if tls_enabled { self.tls_acceptor.clone() } else { None };
+        let connection_handler = self.connection_handler.clone();
+        let description = port_config.description.clone().unwrap_or_else(|| "Unnamed port".to_string());
         
-        // TODO: Implement server-to-server connection handling
+        tracing::info!("Starting listener on port {} ({}) - TLS: {}, Type: {:?}", 
+                      port, description, tls_enabled, connection_type);
+        
+        // Spawn connection handler for this port
+        tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, addr)) => {
+                        // Determine connection type based on port configuration
+                        let is_client_connection = matches!(connection_type, crate::config::PortConnectionType::Client | crate::config::PortConnectionType::Both);
+                        let is_server_connection = matches!(connection_type, crate::config::PortConnectionType::Server | crate::config::PortConnectionType::Both);
+                        
+                        let mut conn_handler = connection_handler.write().await;
+                        if let Err(e) = conn_handler.handle_connection_with_type(stream, addr, tls_acceptor.clone(), is_client_connection, is_server_connection).await {
+                            tracing::error!("Error handling connection from {}: {}", addr, e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Error accepting connection on port {}: {}", port, e);
+                    }
+                }
+            }
+        });
+        
         Ok(())
     }
     
     /// Start message processing loop
     async fn start_message_processor(&self) -> Result<()> {
         let _connection_handler = self.connection_handler.clone();
-        let module_manager = self.module_manager.clone();
-        let users = self.users.clone();
-        let nick_to_id = self.nick_to_id.clone();
+        let _module_manager = self.module_manager.clone();
+        let _users = self.users.clone();
+        let _nick_to_id = self.nick_to_id.clone();
         // Channels are now managed by modules, not core
         // let channels = self.channels.clone();
         
@@ -278,12 +320,13 @@ impl Server {
     
     /// Handle a message from a server
     pub async fn handle_server_message(&self, server_name: &str, message: Message) -> Result<()> {
-        // Check if this is a super server
-        let is_super_server = {
-            let super_servers = self.super_servers.read().await;
-            super_servers.contains_key(server_name)
-        };
+        // Validate that this server is authorized to connect
+        // This should be called when a server first connects, not on every message
+        // For now, we'll check if the server is in our configuration
         
+        // Check if this is a super server
+        let is_super_server = self.server_connections.is_super_server(server_name);
+
         // Process through modules
         let mut module_manager = self.module_manager.write().await;
         match module_manager.handle_server_message(server_name, &message).await? {
@@ -326,14 +369,14 @@ impl Server {
     }
     
     /// Handle server registration
-    async fn handle_server_registration(&self, server_name: &str, message: Message, is_super_server: bool) -> Result<()> {
+    async fn handle_server_registration(&self, server_name: &str, _message: Message, is_super_server: bool) -> Result<()> {
         tracing::info!("Server {} registered (super: {})", server_name, is_super_server);
         // TODO: Implement server registration logic
         Ok(())
     }
     
     /// Handle server quit
-    async fn handle_server_quit(&self, server_name: &str, message: Message) -> Result<()> {
+    async fn handle_server_quit(&self, server_name: &str, _message: Message) -> Result<()> {
         tracing::info!("Server {} quit", server_name);
         // TODO: Implement server quit logic
         Ok(())
@@ -342,7 +385,7 @@ impl Server {
     /// Handle core IRC commands
     async fn handle_core_command(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
         let connection_handler = self.connection_handler.read().await;
-        let client = connection_handler.get_client(&client_id)
+        let _client = connection_handler.get_client(&client_id)
             .ok_or_else(|| Error::User("Client not found".to_string()))?;
         
         match message.command {
@@ -412,6 +455,13 @@ impl Server {
             }
             MessageType::Userhost => {
                 self.handle_userhost(client_id, message).await?;
+            }
+            // Server connection commands
+            MessageType::Connect => {
+                self.handle_connect(client_id, message).await?;
+            }
+            MessageType::Oper => {
+                self.handle_oper(client_id, message).await?;
             }
             _ => {
                 // Command not handled by core
@@ -568,12 +618,12 @@ impl Server {
     
     /// Handle QUIT command
     async fn handle_quit(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
-        let quit_message = message.params.first().map(|s| s.as_str()).unwrap_or("Client quit");
+        let _quit_message = message.params.first().map(|s| s.as_str()).unwrap_or("Client quit");
         
         // Notify modules
         let module_manager = self.module_manager.read().await;
         if let Some(client) = self.connection_handler.read().await.get_client(&client_id) {
-            if let Some(user) = client.get_user() {
+            if let Some(_user) = client.get_user() {
                 // let _ = module_manager.handle_user_disconnection(user).await; // Commented out - needs mutable reference
             }
         }
@@ -827,6 +877,18 @@ impl Server {
             
             // Look up user in database
             if let Some(user) = self.database.get_user_by_nick(target_nick) {
+                // Check if the target user has spy privileges and notify them
+                if user.is_spy() {
+                    self.notify_spy_user(&user, client_id).await?;
+                }
+                
+                // Get the requesting user for administrator privileges check
+                let requesting_user = if let Some(client_user) = &client.user {
+                    self.database.get_user(&client_user.id)
+                } else {
+                    None
+                };
+                
                 let whois_user_msg = NumericReply::whois_user(
                     &user.nick,
                     &user.username,
@@ -845,6 +907,31 @@ impl Server {
                 if user.is_operator {
                     let whois_op_msg = NumericReply::whois_operator(&user.nick);
                     let _ = client.send(whois_op_msg);
+                }
+                
+                // Show channels if requesting user is administrator
+                if let Some(req_user) = requesting_user {
+                    if req_user.is_administrator() {
+                        // Show all channels (including secret ones) for administrators
+                        let channels = self.database.get_user_channels(&user.nick);
+                        if !channels.is_empty() {
+                            let whois_channels_msg = NumericReply::whois_channels(
+                                &user.nick,
+                                &channels.join(" "),
+                            );
+                            let _ = client.send(whois_channels_msg);
+                        }
+                    } else {
+                        // Show only public channels for non-administrators
+                        let channels = self.get_public_channels_for_user(&user.nick).await;
+                        if !channels.is_empty() {
+                            let whois_channels_msg = NumericReply::whois_channels(
+                                &user.nick,
+                                &channels.join(" "),
+                            );
+                            let _ = client.send(whois_channels_msg);
+                        }
+                    }
                 }
                 
                 // Show bot information if user is a bot
@@ -893,7 +980,7 @@ impl Server {
                     let servers = self.database.get_all_servers();
                     let server_names: Vec<String> = servers.iter().map(|s| s.name.clone()).collect();
                     
-                    if let Ok(request_id) = self.network_query_manager.query_whois(
+                    if let Ok(_request_id) = self.network_query_manager.query_whois(
                         target_nick.to_string(),
                         client_id,
                         server_names,
@@ -946,7 +1033,7 @@ impl Server {
                 let servers = self.database.get_all_servers();
                 let server_names: Vec<String> = servers.iter().map(|s| s.name.clone()).collect();
                 
-                if let Ok(request_id) = self.network_query_manager.query_whowas(
+                if let Ok(_request_id) = self.network_query_manager.query_whowas(
                     target_nick.to_string(),
                     client_id,
                     server_names,
@@ -1005,7 +1092,7 @@ impl Server {
                 host: sender_host.to_string(),
             };
             
-            let privmsg = Message::with_prefix(
+            let _privmsg = Message::with_prefix(
                 sender_prefix,
                 MessageType::PrivMsg,
                 vec![target.to_string(), text.to_string()],
@@ -1018,7 +1105,7 @@ impl Server {
                 tracing::info!("PRIVMSG to channel {}: {}", target, text);
             } else {
                 // Private message to user
-                if let Some(target_user) = self.database.get_user_by_nick(target) {
+                if let Some(_target_user) = self.database.get_user_by_nick(target) {
                     // Find the target user's client and send the message
                     // For now, just log it
                     tracing::info!("PRIVMSG from {} to {}: {}", sender_nick, target, text);
@@ -1065,7 +1152,7 @@ impl Server {
                 host: sender_host.to_string(),
             };
             
-            let notice = Message::with_prefix(
+            let _notice = Message::with_prefix(
                 sender_prefix,
                 MessageType::Notice,
                 vec![target.to_string(), text.to_string()],
@@ -1102,7 +1189,7 @@ impl Server {
                     if message.params.is_empty() {
                         // Remove away status
                         user.away_message = None;
-                        self.database.add_user(user);
+                        let _ = self.database.add_user(user);
                         
                         let unaway_msg = NumericReply::unaway();
                         let _ = client.send(unaway_msg);
@@ -1110,7 +1197,7 @@ impl Server {
                         // Set away message
                         let away_message = message.params[0].clone();
                         user.away_message = Some(away_message.clone());
-                        self.database.add_user(user);
+                        let _ = self.database.add_user(user);
                         
                         let now_away_msg = NumericReply::now_away();
                         let _ = client.send(now_away_msg);
@@ -1184,6 +1271,475 @@ impl Server {
             let _ = client.send(userhost_msg);
         }
         Ok(())
+    }
+
+    /// Handle CONNECT command for server connections
+    async fn handle_connect(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        let client = connection_handler.get_client(&client_id)
+            .ok_or_else(|| Error::User("Client not found".to_string()))?;
+
+        // Check if client is registered
+        if !client.is_registered() {
+            let error_msg = NumericReply::not_registered();
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Check if remote CONNECT is allowed
+        if !self.config.security.server_security.allow_remote_connect {
+            let error_msg = NumericReply::no_privileges();
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Validate parameters
+        if message.params.len() < 2 {
+            let error_msg = NumericReply::need_more_params("CONNECT");
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        let target_server = &message.params[0];
+        let target_port: u16 = message.params[1].parse()
+            .map_err(|_| Error::User("Invalid port number".to_string()))?;
+
+        // Check if user is an operator with CONNECT privileges
+        if self.config.security.server_security.require_oper_for_connect {
+            let user = client.user.as_ref().unwrap();
+            if !user.is_operator {
+                let error_msg = NumericReply::no_privileges();
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+
+            // Check if user has remote connect flag (for remote connections)
+            // For now, we'll check if it's a remote connection by comparing with local server
+            let is_remote = target_server != &self.config.server.name;
+            if is_remote && !user.can_remote_connect() {
+                let error_msg = NumericReply::no_privileges();
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            if !is_remote && !user.can_local_connect() {
+                let error_msg = NumericReply::no_privileges();
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+        }
+
+        // Check if target server is already connected
+        if self.server_connections.is_connected(target_server).await {
+            let error_msg = NumericReply::already_registered();
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Check if target server is in allowed hosts
+        if !self.is_host_allowed(target_server) {
+            let error_msg = NumericReply::no_privileges();
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Validate that the target server is configured in our server links
+        // For CONNECT command, we need to check if we have a configured link to this server
+        if !self.is_server_configured_for_connect(target_server, target_port) {
+            let error_msg = NumericReply::connect_failed(target_server, "Server not configured for connection");
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Check hop count limits
+        if self.server_connections.server_count().await >= self.config.security.server_security.max_hop_count as usize {
+            let error_msg = NumericReply::no_privileges();
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Attempt to connect to the target server
+        match self.connect_to_server(target_server, target_port).await {
+            Ok(_) => {
+                let success_msg = NumericReply::connect_success(target_server, target_port);
+                let _ = client.send(success_msg);
+                tracing::info!("Remote CONNECT from {} to {}:{} successful", 
+                    client.user.as_ref().unwrap().nick, target_server, target_port);
+            }
+            Err(e) => {
+                let error_msg = NumericReply::connect_failed(target_server, &e.to_string());
+                let _ = client.send(error_msg);
+                tracing::warn!("Remote CONNECT from {} to {}:{} failed: {}", 
+                    client.user.as_ref().unwrap().nick, target_server, target_port, e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle OPER command
+    async fn handle_oper(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        let client = connection_handler.get_client(&client_id)
+            .ok_or_else(|| Error::User("Client not found".to_string()))?;
+
+        // Check if client is registered
+        if !client.is_registered() {
+            let error_msg = NumericReply::not_registered();
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Validate parameters
+        if message.params.len() < 2 {
+            let error_msg = NumericReply::need_more_params("OPER");
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        let _oper_name = &message.params[0];
+        let password = &message.params[1];
+
+        // Get user and authenticate
+        let database = self.database.clone();
+        if let Some(mut user) = database.get_user(&client.id) {
+            if self.authenticate_operator(&mut user, password).await {
+                // Send success message with operator privileges
+                let success_msg = NumericReply::youre_oper();
+                let _ = client.send(success_msg);
+                
+                // Send operator privileges information
+                self.send_operator_privileges(&client, &user).await;
+                
+                // Update user in database
+                database.update_user(&client.id, user.clone())?;
+                
+                tracing::info!("User {} authenticated as operator with flags: {:?}", 
+                    user.nick, user.operator_flags);
+            } else {
+                // Authentication failed
+                let error_msg = NumericReply::password_mismatch();
+                let _ = client.send(error_msg);
+                
+                tracing::warn!("Failed operator authentication attempt for user {} from {}", 
+                    user.nick, user.host);
+            }
+        } else {
+            let error_msg = NumericReply::password_mismatch();
+            let _ = client.send(error_msg);
+        }
+
+        Ok(())
+    }
+
+    /// Check if a user is an operator
+    async fn is_user_operator(&self, user: &User) -> bool {
+        user.is_operator
+    }
+
+    /// Authenticate operator and set flags
+    async fn authenticate_operator(&self, user: &mut User, password: &str) -> bool {
+        if let Some(operator_config) = self.config.authenticate_operator(
+            &user.nick,
+            password,
+            &user.username,
+            &user.host,
+        ) {
+            // Set operator flags
+            let flags: HashSet<crate::config::OperatorFlag> = operator_config.flags.iter().cloned().collect();
+            user.set_operator_flags(flags);
+            
+            tracing::info!("Operator {} authenticated with flags: {:?}", user.nick, user.operator_flags);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check if a host is allowed for remote connections
+    fn is_host_allowed(&self, host: &str) -> bool {
+        // Check denied hosts first
+        for denied_host in &self.config.security.server_security.denied_remote_hosts {
+            if self.matches_host_pattern(host, denied_host) {
+                return false;
+            }
+        }
+
+        // Check allowed hosts
+        for allowed_host in &self.config.security.server_security.allowed_remote_hosts {
+            if self.matches_host_pattern(host, allowed_host) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a host matches a pattern (supports wildcards)
+    fn matches_host_pattern(&self, host: &str, pattern: &str) -> bool {
+        if pattern == "*" {
+            return true;
+        }
+
+        // Simple wildcard matching
+        if pattern.contains('*') {
+            let parts: Vec<&str> = pattern.split('*').collect();
+            if parts.len() == 2 {
+                return host.starts_with(parts[0]) && host.ends_with(parts[1]);
+            }
+        }
+
+        host == pattern
+    }
+
+    /// Check if a server is configured for CONNECT command
+    fn is_server_configured_for_connect(&self, server_name: &str, port: u16) -> bool {
+        // Check if we have a server link configuration for this server
+        if let Some(link) = self.server_connections.get_server_link(server_name) {
+            // Verify the port matches (or allow if not specified)
+            return link.port == port || port == 0;
+        }
+        
+        // Check if it's a super server
+        if let Some(super_server) = self.server_connections.get_super_server(server_name) {
+            return super_server.port == port || port == 0;
+        }
+        
+        false
+    }
+
+    /// Connect to a remote server
+    async fn connect_to_server(&self, server_name: &str, port: u16) -> Result<()> {
+        // Get server link configuration
+        let server_link = self.server_connections.get_server_link(server_name);
+        
+        // Validate the server is configured for connection
+        if !self.is_server_configured_for_connect(server_name, port) {
+            return Err(Error::Server(format!(
+                "Server {} is not configured for connection in server links", 
+                server_name
+            )));
+        }
+        
+        // Create connection
+        let stream = tokio::net::TcpStream::connect(format!("{}:{}", server_name, port)).await
+            .map_err(|e| Error::Connection(format!("Failed to connect to {}:{}: {}", server_name, port, e)))?;
+
+        let remote_addr = stream.peer_addr()
+            .map_err(|e| Error::Connection(format!("Failed to get peer address: {}", e)))?;
+        let local_addr = stream.local_addr()
+            .map_err(|e| Error::Connection(format!("Failed to get local address: {}", e)))?;
+
+        // Create server connection
+        let connection_id = Uuid::new_v4();
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        
+        let mut server_connection = ServerConnection::new(
+            connection_id,
+            remote_addr,
+            local_addr,
+            sender,
+            true, // is_outgoing
+        );
+
+        // Set server information
+        server_connection.info.name = server_name.to_string();
+        server_connection.info.hostname = server_name.to_string();
+        server_connection.info.port = port;
+        server_connection.info.version = self.config.server.version.clone();
+        server_connection.info.description = format!("Connected from {}", self.config.server.name);
+
+        // Set link password if configured
+        if let Some(link) = server_link {
+            server_connection.info.link_password = Some(link.password.clone());
+            server_connection.info.use_tls = link.tls;
+        }
+
+        // Add connection to manager
+        self.server_connections.add_connection(server_connection).await?;
+
+        // Start server connection handler
+        self.start_server_connection_handler(connection_id, stream, receiver, server_name).await?;
+
+        tracing::info!("Successfully connected to server {}:{}", server_name, port);
+        Ok(())
+    }
+
+    /// Start a server connection handler
+    async fn start_server_connection_handler(
+        &self,
+        _connection_id: Uuid,
+        stream: tokio::net::TcpStream,
+        mut receiver: tokio::sync::mpsc::UnboundedReceiver<Message>,
+        server_name: &str,
+    ) -> Result<()> {
+        let (read_half, mut write_half) = stream.into_split();
+
+        // Spawn message sender task
+        let server_name_clone = server_name.to_string();
+        tokio::spawn(async move {
+            while let Some(message) = receiver.recv().await {
+                let message_str = message.to_string();
+                if let Err(e) = write_half.write_all(message_str.as_bytes()).await {
+                    tracing::error!("Failed to send message to server {}: {}", server_name_clone, e);
+                    break;
+                }
+            }
+        });
+
+        // Spawn message receiver task
+        let server_name_clone2 = server_name.to_string();
+        tokio::spawn(async move {
+            let mut reader = tokio::io::BufReader::new(read_half);
+            let mut line = String::new();
+
+            loop {
+                line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) => {
+                        tracing::info!("Server {} disconnected", server_name_clone2);
+                        break;
+                    }
+                    Ok(_) => {
+                        // Parse and handle server message
+                        if let Ok(message) = Message::parse(&line.trim()) {
+                            // TODO: Handle server message
+                            tracing::debug!("Received from server {}: {:?}", server_name_clone2, message);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Error reading from server {}: {}", server_name_clone2, e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Validate an incoming server connection
+    pub async fn validate_incoming_server_connection(
+        &self, 
+        server_name: &str, 
+        hostname: &str, 
+        port: u16
+    ) -> Result<()> {
+        // Use the server connection manager to validate
+        self.server_connections.validate_incoming_connection(server_name, hostname, port)?;
+        
+        tracing::info!("Incoming server connection validated: {} ({})", server_name, hostname);
+        Ok(())
+    }
+
+    /// Handle incoming server connection
+    pub async fn handle_incoming_server_connection(
+        &self,
+        stream: tokio::net::TcpStream,
+        remote_addr: std::net::SocketAddr,
+    ) -> Result<()> {
+        // For now, we'll create a basic server connection
+        // In a full implementation, this would involve:
+        // 1. Reading the SERVER command from the incoming connection
+        // 2. Validating the server name and credentials
+        // 3. Checking if the server is configured in our links
+        
+        let connection_id = Uuid::new_v4();
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        
+        let server_connection = ServerConnection::new(
+            connection_id,
+            remote_addr,
+            stream.local_addr()?,
+            sender,
+            false, // is_outgoing = false for incoming connections
+        );
+
+        // Add to server connections
+        self.server_connections.add_connection(server_connection).await?;
+
+        // Start connection handler
+        self.start_server_connection_handler(connection_id, stream, receiver, "unknown").await?;
+
+        tracing::info!("Incoming server connection from {} accepted", remote_addr);
+        Ok(())
+    }
+
+    /// Notify a spy user that someone did a WHOIS on them
+    async fn notify_spy_user(&self, target_user: &User, requesting_client_id: Uuid) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(requesting_client) = connection_handler.get_client(&requesting_client_id) {
+            if let Some(requesting_user) = &requesting_client.user {
+                // Send spy notification to the target user
+                let spy_notification = Message::new(
+                    crate::MessageType::Notice,
+                    vec![
+                        target_user.nick.clone(),
+                        format!("SPY: {} ({}@{}) did a WHOIS on you", 
+                            requesting_user.nick, 
+                            requesting_user.username, 
+                            requesting_user.host)
+                    ],
+                );
+                
+                // Find the target user's client and send the notification
+                let target_client_id = self.database.get_user_by_nick(&target_user.nick)
+                    .and_then(|user| Some(user.id));
+                
+                if let Some(client_id) = target_client_id {
+                    if let Some(target_client) = connection_handler.get_client(&client_id) {
+                        let _ = target_client.send(spy_notification);
+                        tracing::info!("Sent spy notification to {} about WHOIS from {}", 
+                            target_user.nick, requesting_user.nick);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Get public channels for a user (excluding secret channels)
+    async fn get_public_channels_for_user(&self, nickname: &str) -> Vec<String> {
+        let channels = self.database.get_user_channels(nickname);
+        
+        // Filter out secret channels (those with +s mode)
+        // For now, we'll return all channels - in a full implementation,
+        // we would check channel modes to filter secret channels
+        channels.into_iter().collect()
+    }
+
+    /// Send operator privileges information to a client
+    async fn send_operator_privileges(&self, client: &Client, user: &User) {
+        let mut privileges = Vec::new();
+        
+        if user.is_global_oper() {
+            privileges.push("Global Operator (o)");
+        }
+        if user.is_local_oper() {
+            privileges.push("Local Operator (O)");
+        }
+        if user.can_remote_connect() {
+            privileges.push("Remote Connect (C)");
+        }
+        if user.can_local_connect() {
+            privileges.push("Local Connect (c)");
+        }
+        if user.is_administrator() {
+            privileges.push("Administrator (A)");
+        }
+        if user.is_spy() {
+            privileges.push("Spy (y)");
+        }
+        
+        if !privileges.is_empty() {
+            let privileges_msg = Message::new(
+                crate::MessageType::Notice,
+                vec![
+                    user.nick.clone(),
+                    format!("Operator privileges: {}", privileges.join(", "))
+                ],
+            );
+            let _ = client.send(privileges_msg);
+        }
     }
 }
 

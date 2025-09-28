@@ -4,6 +4,7 @@ use crate::Message;
 
 /// IRC numeric reply codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u16)]
 pub enum NumericReply {
     // Connection registration
     RplWelcome = 001,
@@ -150,12 +151,310 @@ pub enum NumericReply {
     ErrNoOperHost = 491,
     ErrUModeUnknownFlag = 501,
     ErrUsersDontMatch = 502,
+    // Custom numeric replies
+    Custom(u16),
 }
 
 impl NumericReply {
+    /// Get the numeric code as a u16
+    pub fn numeric_code(&self) -> u16 {
+        match self {
+            NumericReply::RplWelcome => 001,
+            NumericReply::RplYourHost => 002,
+            NumericReply::RplCreated => 003,
+            NumericReply::RplMyInfo => 004,
+            NumericReply::RplBounce => 005,
+            NumericReply::RplAdminMe => 256,
+            NumericReply::RplAdminLoc1 => 257,
+            NumericReply::RplAdminLoc2 => 258,
+            NumericReply::RplAdminEmail => 259,
+            NumericReply::RplVersion => 351,
+            NumericReply::RplWhoisUser => 311,
+            NumericReply::RplWhoisServer => 312,
+            NumericReply::RplWhoisOperator => 313,
+            NumericReply::RplWhoisIdle => 317,
+            NumericReply::RplEndOfWhois => 318,
+            NumericReply::RplWhoisChannels => 319,
+            NumericReply::RplWhoisSpecial => 320,
+            NumericReply::RplList => 322,
+            NumericReply::RplListEnd => 323,
+            NumericReply::RplChannelModeIs => 324,
+            NumericReply::RplNoTopic => 331,
+            NumericReply::RplTopic => 332,
+            NumericReply::RplInviting => 341,
+            NumericReply::RplSummoning => 342,
+            NumericReply::RplInviteList => 346,
+            NumericReply::RplEndOfInviteList => 347,
+            NumericReply::RplExceptList => 348,
+            NumericReply::RplEndOfExceptList => 349,
+            NumericReply::RplWhoReply => 352,
+            NumericReply::RplEndOfWho => 315,
+            NumericReply::RplNameReply => 353,
+            NumericReply::RplEndOfNames => 366,
+            NumericReply::RplLinks => 364,
+            NumericReply::RplEndOfLinks => 365,
+            NumericReply::RplBanList => 367,
+            NumericReply::RplEndOfBanList => 368,
+            NumericReply::RplEndOfWhoWas => 369,
+            NumericReply::RplInfo => 371,
+            NumericReply::RplEndOfInfo => 374,
+            NumericReply::RplMotdStart => 375,
+            NumericReply::RplMotd => 372,
+            NumericReply::RplEndOfMotd => 376,
+            NumericReply::RplYoureOper => 381,
+            NumericReply::RplRehashing => 382,
+            NumericReply::RplTime => 391,
+            NumericReply::RplUsersStart => 392,
+            NumericReply::RplUsers => 393,
+            NumericReply::RplEndOfUsers => 394,
+            NumericReply::RplNoUsers => 395,
+            NumericReply::RplTraceLink => 200,
+            NumericReply::RplTraceConnecting => 201,
+            NumericReply::RplTraceHandshake => 202,
+            NumericReply::RplTraceUnknown => 203,
+            NumericReply::RplTraceOperator => 204,
+            NumericReply::RplTraceUser => 205,
+            NumericReply::RplTraceServer => 206,
+            NumericReply::RplTraceService => 207,
+            NumericReply::RplTraceNewType => 208,
+            NumericReply::RplTraceClass => 209,
+            NumericReply::RplTraceLog => 261,
+            NumericReply::RplTraceEnd => 262,
+            NumericReply::RplStatsLinkInfo => 211,
+            NumericReply::RplStatsCommands => 212,
+            NumericReply::RplEndOfStats => 219,
+            NumericReply::RplStatsUptime => 242,
+            NumericReply::RplStatsOLine => 243,
+            NumericReply::RplUmodeIs => 221,
+            NumericReply::RplServList => 234,
+            NumericReply::RplServListEnd => 235,
+            NumericReply::RplLUserClient => 251,
+            NumericReply::RplLUserOp => 252,
+            NumericReply::RplLUserUnknown => 253,
+            NumericReply::RplLUserChannels => 254,
+            NumericReply::RplLUserMe => 255,
+            NumericReply::RplAway => 301,
+            NumericReply::RplUserhost => 302,
+            NumericReply::RplIson => 303,
+            NumericReply::RplUnaway => 305,
+            NumericReply::RplNowAway => 306,
+            NumericReply::ErrNoSuchNick => 401,
+            NumericReply::ErrNoSuchServer => 402,
+            NumericReply::ErrNoSuchChannel => 403,
+            NumericReply::ErrCannotSendToChan => 404,
+            NumericReply::ErrTooManyChannels => 405,
+            NumericReply::ErrWasNoSuchNick => 406,
+            NumericReply::ErrTooManyTargets => 407,
+            NumericReply::ErrNoSuchService => 408,
+            NumericReply::ErrNoOrigin => 409,
+            NumericReply::ErrNoRecipients => 411,
+            NumericReply::ErrNoTextToSend => 412,
+            NumericReply::ErrNoTopLevel => 413,
+            NumericReply::ErrWildTopLevel => 414,
+            NumericReply::ErrBadMask => 415,
+            NumericReply::ErrUnknownCommand => 421,
+            NumericReply::ErrNoMotd => 422,
+            NumericReply::ErrNoAdminInfo => 423,
+            NumericReply::ErrFileError => 424,
+            NumericReply::ErrNoNicknameGiven => 431,
+            NumericReply::ErrErroneousNickname => 432,
+            NumericReply::ErrNicknameInUse => 433,
+            NumericReply::ErrNickCollision => 436,
+            NumericReply::ErrUnavailResource => 437,
+            NumericReply::ErrUserNotInChannel => 441,
+            NumericReply::ErrNotOnChannel => 442,
+            NumericReply::ErrUserOnChannel => 443,
+            NumericReply::ErrNoLogin => 444,
+            NumericReply::ErrSummonDisabled => 445,
+            NumericReply::ErrUsersDisabled => 446,
+            NumericReply::ErrNotRegistered => 451,
+            NumericReply::ErrNeedMoreParams => 461,
+            NumericReply::ErrAlreadyRegistered => 462,
+            NumericReply::ErrNoPermForHost => 463,
+            NumericReply::ErrPasswordMismatch => 464,
+            NumericReply::ErrYoureBannedCreep => 465,
+            NumericReply::ErrKeySet => 467,
+            NumericReply::ErrChannelIsFull => 471,
+            NumericReply::ErrUnknownMode => 472,
+            NumericReply::ErrInviteOnlyChan => 473,
+            NumericReply::ErrBannedFromChan => 474,
+            NumericReply::ErrBadChannelKey => 475,
+            NumericReply::ErrBadChanMask => 476,
+            NumericReply::ErrNoChanModes => 477,
+            NumericReply::ErrBanListFull => 478,
+            NumericReply::ErrNoPrivileges => 481,
+            NumericReply::ErrChanOpPrivsNeeded => 482,
+            NumericReply::ErrCantKillServer => 483,
+            NumericReply::ErrRestricted => 484,
+            NumericReply::ErrUsersDontMatch => 502,
+            NumericReply::RplStatsCLine => 213,
+            NumericReply::RplStatsNLine => 214,
+            NumericReply::RplStatsILine => 215,
+            NumericReply::RplStatsKLine => 216,
+            NumericReply::RplStatsYLine => 218,
+            NumericReply::RplStatsLLine => 241,
+            NumericReply::RplStatsHLine => 244,
+            NumericReply::RplLocalUsers => 265,
+            NumericReply::RplGlobalUsers => 266,
+            NumericReply::ErrUniqOpPrivsNeeded => 485,
+            NumericReply::ErrNoOperHost => 491,
+            NumericReply::ErrUModeUnknownFlag => 501,
+            NumericReply::Custom(code) => *code,
+        }
+    }
+    
     /// Get the numeric code as a string
     pub fn code(&self) -> String {
-        format!("{:03}", *self as u16)
+        match self {
+            NumericReply::Custom(code) => format!("{:03}", code),
+            _ => {
+                // For non-Custom variants, we need to match each case
+                let code = match self {
+                    NumericReply::RplWelcome => 1,
+                    NumericReply::RplYourHost => 2,
+                    NumericReply::RplCreated => 3,
+                    NumericReply::RplMyInfo => 4,
+                    NumericReply::RplBounce => 5,
+                    NumericReply::RplAdminMe => 256,
+                    NumericReply::RplAdminLoc1 => 257,
+                    NumericReply::RplAdminLoc2 => 258,
+                    NumericReply::RplAdminEmail => 259,
+                    NumericReply::RplVersion => 351,
+                    NumericReply::RplWhoisUser => 311,
+                    NumericReply::RplWhoisServer => 312,
+                    NumericReply::RplWhoisOperator => 313,
+                    NumericReply::RplWhoisIdle => 317,
+                    NumericReply::RplEndOfWhois => 318,
+                    NumericReply::RplWhoisChannels => 319,
+                    NumericReply::RplWhoisSpecial => 320,
+                    NumericReply::RplList => 322,
+                    NumericReply::RplListEnd => 323,
+                    NumericReply::RplChannelModeIs => 324,
+                    NumericReply::RplNoTopic => 331,
+                    NumericReply::RplTopic => 332,
+                    NumericReply::RplInviting => 341,
+                    NumericReply::RplSummoning => 342,
+                    NumericReply::RplInviteList => 346,
+                    NumericReply::RplEndOfInviteList => 347,
+                    NumericReply::RplExceptList => 348,
+                    NumericReply::RplEndOfExceptList => 349,
+                    NumericReply::RplWhoReply => 352,
+                    NumericReply::RplEndOfWho => 315,
+                    NumericReply::RplNameReply => 353,
+                    NumericReply::RplEndOfNames => 366,
+                    NumericReply::RplLinks => 364,
+                    NumericReply::RplEndOfLinks => 365,
+                    NumericReply::RplBanList => 367,
+                    NumericReply::RplEndOfBanList => 368,
+                    NumericReply::RplEndOfWhoWas => 369,
+                    NumericReply::RplInfo => 371,
+                    NumericReply::RplEndOfInfo => 374,
+                    NumericReply::RplMotdStart => 375,
+                    NumericReply::RplMotd => 372,
+                    NumericReply::RplEndOfMotd => 376,
+                    NumericReply::RplYoureOper => 381,
+                    NumericReply::RplRehashing => 382,
+                    NumericReply::RplTime => 391,
+                    NumericReply::RplUsersStart => 392,
+                    NumericReply::RplUsers => 393,
+                    NumericReply::RplEndOfUsers => 394,
+                    NumericReply::RplNoUsers => 395,
+                    NumericReply::RplTraceLink => 200,
+                    NumericReply::RplTraceConnecting => 201,
+                    NumericReply::RplTraceHandshake => 202,
+                    NumericReply::RplTraceUnknown => 203,
+                    NumericReply::RplTraceOperator => 204,
+                    NumericReply::RplTraceUser => 205,
+                    NumericReply::RplTraceServer => 206,
+                    NumericReply::RplTraceService => 207,
+                    NumericReply::RplTraceNewType => 208,
+                    NumericReply::RplTraceClass => 209,
+                    NumericReply::RplTraceLog => 261,
+                    NumericReply::RplTraceEnd => 262,
+                    NumericReply::RplStatsLinkInfo => 211,
+                    NumericReply::RplStatsCommands => 212,
+                    NumericReply::RplEndOfStats => 219,
+                    NumericReply::RplStatsUptime => 242,
+                    NumericReply::RplStatsOLine => 243,
+                    NumericReply::RplUmodeIs => 221,
+                    NumericReply::RplServList => 234,
+                    NumericReply::RplServListEnd => 235,
+                    NumericReply::RplLUserClient => 251,
+                    NumericReply::RplLUserOp => 252,
+                    NumericReply::RplLUserUnknown => 253,
+                    NumericReply::RplLUserChannels => 254,
+                    NumericReply::RplLUserMe => 255,
+                    NumericReply::RplAway => 301,
+                    NumericReply::RplUserhost => 302,
+                    NumericReply::RplIson => 303,
+                    NumericReply::RplUnaway => 305,
+                    NumericReply::RplNowAway => 306,
+                    NumericReply::ErrNoSuchNick => 401,
+                    NumericReply::ErrNoSuchServer => 402,
+                    NumericReply::ErrNoSuchChannel => 403,
+                    NumericReply::ErrCannotSendToChan => 404,
+                    NumericReply::ErrTooManyChannels => 405,
+                    NumericReply::ErrWasNoSuchNick => 406,
+                    NumericReply::ErrTooManyTargets => 407,
+                    NumericReply::ErrNoSuchService => 408,
+                    NumericReply::ErrNoOrigin => 409,
+                    NumericReply::ErrNoRecipients => 411,
+                    NumericReply::ErrNoTextToSend => 412,
+                    NumericReply::ErrNoTopLevel => 413,
+                    NumericReply::ErrWildTopLevel => 414,
+                    NumericReply::ErrBadMask => 415,
+                    NumericReply::ErrUnknownCommand => 421,
+                    NumericReply::ErrNoMotd => 422,
+                    NumericReply::ErrNoAdminInfo => 423,
+                    NumericReply::ErrFileError => 424,
+                    NumericReply::ErrNoNicknameGiven => 431,
+                    NumericReply::ErrErroneousNickname => 432,
+                    NumericReply::ErrNicknameInUse => 433,
+                    NumericReply::ErrNickCollision => 436,
+                    NumericReply::ErrUnavailResource => 437,
+                    NumericReply::ErrUserNotInChannel => 441,
+                    NumericReply::ErrNotOnChannel => 442,
+                    NumericReply::ErrUserOnChannel => 443,
+                    NumericReply::ErrNoLogin => 444,
+                    NumericReply::ErrSummonDisabled => 445,
+                    NumericReply::ErrUsersDisabled => 446,
+                    NumericReply::ErrNotRegistered => 451,
+                    NumericReply::ErrNeedMoreParams => 461,
+                    NumericReply::ErrAlreadyRegistered => 462,
+                    NumericReply::ErrNoPermForHost => 463,
+                    NumericReply::ErrPasswordMismatch => 464,
+                    NumericReply::ErrYoureBannedCreep => 465,
+                    NumericReply::ErrKeySet => 467,
+                    NumericReply::ErrChannelIsFull => 471,
+                    NumericReply::ErrUnknownMode => 472,
+                    NumericReply::ErrInviteOnlyChan => 473,
+                    NumericReply::ErrBannedFromChan => 474,
+                    NumericReply::ErrBadChannelKey => 475,
+                    NumericReply::ErrBadChanMask => 476,
+                    NumericReply::ErrNoChanModes => 477,
+                    NumericReply::ErrBanListFull => 478,
+                    NumericReply::ErrNoPrivileges => 481,
+                    NumericReply::ErrChanOpPrivsNeeded => 482,
+                    NumericReply::ErrCantKillServer => 483,
+                    NumericReply::ErrRestricted => 484,
+                    NumericReply::ErrUniqOpPrivsNeeded => 485,
+                    NumericReply::ErrNoOperHost => 491,
+                    NumericReply::ErrUModeUnknownFlag => 501,
+                    NumericReply::ErrUsersDontMatch => 502,
+                    NumericReply::RplStatsCLine => 213,
+                    NumericReply::RplStatsNLine => 214,
+                    NumericReply::RplStatsILine => 215,
+                    NumericReply::RplStatsKLine => 216,
+                    NumericReply::RplStatsYLine => 218,
+                    NumericReply::RplStatsLLine => 241,
+                    NumericReply::RplStatsHLine => 244,
+                    NumericReply::RplLocalUsers => 265,
+                    NumericReply::RplGlobalUsers => 266,
+                    NumericReply::Custom(_) => unreachable!(), // Already handled above
+                };
+                format!("{:03}", code)
+            }
+        }
     }
     
     /// Create a numeric reply message
@@ -168,12 +467,33 @@ impl NumericReply {
             all_params,
         )
     }
+    
+    /// Create a numeric reply message using configurable replies
+    pub fn reply_with_config(&self, target: &str, params: &std::collections::HashMap<String, String>, replies_config: &crate::RepliesConfig, server_info: &crate::RepliesServerInfo) -> Message {
+        let code = self.numeric_code();
+        
+        // Try to get custom reply text from configuration
+        if let Some(reply_text) = replies_config.format_reply(code, params, server_info) {
+            // Split the reply text into parts (target + message)
+            let parts: Vec<&str> = reply_text.splitn(2, ' ').collect();
+            if parts.len() >= 2 {
+                let message = parts[1].to_string();
+                return Message::new(
+                    crate::MessageType::Custom(self.code()),
+                    vec![target.to_string(), message],
+                );
+            }
+        }
+        
+        // Fall back to default behavior
+        self.reply(target, vec![])
+    }
 }
 
 /// Common numeric replies
 impl NumericReply {
     /// RPL_WELCOME
-    pub fn welcome(server: &str, nick: &str, user: &str, host: &str) -> Message {
+    pub fn welcome(_server: &str, nick: &str, user: &str, host: &str) -> Message {
         Self::RplWelcome.reply(
             nick,
             vec![format!("Welcome to the Internet Relay Network {}!{}@{}", nick, user, host)],
@@ -189,7 +509,7 @@ impl NumericReply {
     }
     
     /// RPL_CREATED
-    pub fn created(server: &str, date: &str) -> Message {
+    pub fn created(_server: &str, date: &str) -> Message {
         Self::RplCreated.reply(
             "client",
             vec![format!("This server was created {}", date)],
@@ -497,6 +817,22 @@ impl NumericReply {
         )
     }
     
+    /// RPL_CONNECTSUCCESS
+    pub fn connect_success(server: &str, port: u16) -> Message {
+        Self::Custom(200).reply(
+            "*",
+            vec![format!("Connection to {}:{} successful", server, port)],
+        )
+    }
+    
+    /// RPL_CONNECTFAILED
+    pub fn connect_failed(server: &str, error: &str) -> Message {
+        Self::Custom(201).reply(
+            "*",
+            vec![format!("Connection to {} failed: {}", server, error)],
+        )
+    }
+    
     /// RPL_WHOISOPERATOR
     pub fn whois_operator(nick: &str) -> Message {
         Self::RplWhoisOperator.reply(
@@ -619,4 +955,21 @@ impl NumericReply {
             vec![format!(":{}", entries.join(" "))],
         )
     }
+
+        /// ERR_NOPRIVILEGES
+        pub fn no_privileges() -> Message {
+            Self::ErrNoPrivileges.reply(
+                "*",
+                vec!["Permission Denied- You're not an IRC operator".to_string()],
+            )
+        }
+
+        /// RPL_YOUREOPER
+        pub fn youre_oper() -> Message {
+            Self::RplYoureOper.reply(
+                "*",
+                vec!["You are now an IRC operator".to_string()],
+            )
+        }
+
 }

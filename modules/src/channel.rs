@@ -1,6 +1,10 @@
 //! Channel operations module
 
-use rustircd_core::{Module, module::ModuleResult, Client, Message, User, Error, Result, NumericReply};
+use rustircd_core::{
+    Module, module::ModuleResult, Client, Message, User, Error, Result, 
+    MessageType, Prefix, BroadcastSystem, BroadcastTarget, BroadcastPriority, 
+    BroadcastMessage, Database
+};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -277,6 +281,12 @@ pub struct ChannelModule {
     channels: Arc<RwLock<HashMap<String, Channel>>>,
     /// Channel-specific numeric replies
     numeric_replies: Vec<u16>,
+    /// Broadcast system for channel events
+    broadcast_system: Arc<RwLock<BroadcastSystem>>,
+    /// Database reference for user/channel tracking
+    database: Arc<RwLock<Database>>,
+    /// Invite list (nick -> set of channels they're invited to)
+    invite_list: Arc<RwLock<HashMap<String, HashSet<String>>>>,
 }
 
 impl ChannelModule {
@@ -321,6 +331,30 @@ impl ChannelModule {
                 353, // RPL_NAMREPLY
                 366, // RPL_ENDOFNAMES
             ],
+            broadcast_system: Arc::new(RwLock::new(BroadcastSystem::new())),
+            database: Arc::new(RwLock::new(Database::new(10000, 30))),
+            invite_list: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Create a new channel module with external dependencies
+    pub fn with_dependencies(
+        broadcast_system: Arc<RwLock<BroadcastSystem>>,
+        database: Arc<RwLock<Database>>,
+    ) -> Self {
+        Self {
+            name: "channel".to_string(),
+            version: "1.0.0".to_string(),
+            description: "Channel operations and management".to_string(),
+            channels: Arc::new(RwLock::new(HashMap::new())),
+            numeric_replies: vec![
+                403, 404, 405, 441, 442, 443, 471, 472, 473, 474, 475, 476, 477, 478, 482,
+                324, 329, 331, 332, 333, 341, 346, 347, 348, 349, 367, 368,
+                321, 322, 323, 353, 366,
+            ],
+            broadcast_system,
+            database,
+            invite_list: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -436,15 +470,117 @@ impl ChannelModule {
         }
         
         let channel_name = &message.params[0];
+        let key = message.params.get(1);
         
         // Validate channel name
-        if !rustircd_core::utils::string::is_valid_channel_name(channel_name) {
+        if !self.is_valid_channel_name(channel_name) {
             return Err(Error::Channel("Invalid channel name".to_string()));
         }
         
-        // TODO: Implement channel join logic
-        tracing::info!("Client {} joining channel {}", client.id, channel_name);
+        // Get user from database
+        let database = self.database.read().await;
+        let user = database.get_user(&client.id)
+            .ok_or_else(|| Error::User("User not found".to_string()))?;
         
+        // Check if user is already in too many channels
+        let user_channels = database.get_user_channels(&user.nick);
+        if user_channels.len() >= 10 { // Default channel limit
+            return Err(Error::User("Too many channels".to_string()));
+        }
+        
+        // Check if user is already in the channel
+        if user_channels.contains(channel_name) {
+            return Err(Error::User("Already on channel".to_string()));
+        }
+        
+        let mut channels = self.channels.write().await;
+        
+        // Get or create channel
+        let channel = if let Some(channel) = channels.get_mut(channel_name) {
+            // Check channel restrictions
+            if channel.is_invite_only() && !self.is_user_invited(&user.nick, channel_name).await {
+                return Err(Error::User("Cannot join channel (+i)".to_string()));
+            }
+            
+            if channel.is_keyed() {
+                if let Some(key) = key {
+                    if !channel.check_key(key) {
+                        return Err(Error::User("Cannot join channel (+k)".to_string()));
+                    }
+                } else {
+                    return Err(Error::User("Cannot join channel (+k)".to_string()));
+                }
+            }
+            
+            // Check ban masks
+            if self.is_user_banned(&user, channel).await {
+                return Err(Error::User("Cannot join channel (+b)".to_string()));
+            }
+            
+            // Check user limit
+            if let Some(limit) = channel.user_limit {
+                if channel.member_count() >= limit {
+                    return Err(Error::User("Cannot join channel (+l)".to_string()));
+                }
+            }
+            
+            channel.clone()
+        } else {
+            // Create new channel
+            let mut new_channel = Channel::new(channel_name.clone());
+            // First user becomes operator
+            new_channel.add_member(user.id)?;
+            new_channel.set_operator(&user.id, true)?;
+            new_channel.clone()
+        };
+        
+        // Add user to channel
+        let mut channel = channel;
+        channel.add_member(user.id)?;
+        
+        // If this is a new channel, make the user an operator
+        if channel.member_count() == 1 {
+            channel.set_operator(&user.id, true)?;
+        }
+        
+        // Update channels
+        channels.insert(channel_name.clone(), channel.clone());
+        
+        // Update database
+        drop(channels);
+        drop(database);
+        
+        let database = self.database.write().await;
+        database.add_user_to_channel(&user.nick, channel_name)?;
+        
+        // Remove from invite list if present
+        self.remove_invite(&user.nick, channel_name).await;
+        
+        // Broadcast JOIN message to channel
+        let join_message = Message::with_prefix(
+            Prefix::User {
+                nick: user.nick.clone(),
+                user: user.username.clone(),
+                host: user.host.clone(),
+            },
+            MessageType::Join,
+            vec![channel_name.clone()],
+        );
+        
+        let broadcast = BroadcastMessage {
+            message: join_message,
+            target: BroadcastTarget::Channel(channel_name.clone()),
+            sender: Some(user.id),
+            priority: BroadcastPriority::Normal,
+        };
+        
+        let mut broadcast_system = self.broadcast_system.write().await;
+        broadcast_system.queue_message(broadcast)?;
+        
+        // Subscribe user to channel for future broadcasts
+        broadcast_system.subscribe_to_channel(user.id, channel_name.clone());
+        
+        tracing::info!("User {} joined channel {}", user.nick, channel_name);
         Ok(())
     }
     
@@ -458,10 +594,76 @@ impl ChannelModule {
         }
         
         let channel_name = &message.params[0];
+        let reason = message.params.get(1).map(|s| s.as_str());
         
-        // TODO: Implement channel part logic
-        tracing::info!("Client {} leaving channel {}", client.id, channel_name);
+        // Get user from database
+        let database = self.database.read().await;
+        let user = database.get_user(&client.id)
+            .ok_or_else(|| Error::User("User not found".to_string()))?;
         
+        // Check if user is in the channel
+        let user_channels = database.get_user_channels(&user.nick);
+        if !user_channels.contains(channel_name) {
+            return Err(Error::User("You're not on that channel".to_string()));
+        }
+        
+        let mut channels = self.channels.write().await;
+        
+        // Get channel
+        let mut channel = channels.get_mut(channel_name)
+            .ok_or_else(|| Error::User("No such channel".to_string()))?
+            .clone();
+        
+        // Remove user from channel
+        channel.remove_member(&user.id);
+        
+        // Update channels
+        channels.insert(channel_name.clone(), channel.clone());
+        
+        // Update database
+        drop(channels);
+        drop(database);
+        
+        let database = self.database.write().await;
+        database.remove_user_from_channel(&user.nick, channel_name)?;
+        
+        // Broadcast PART message to channel
+        let mut part_params = vec![channel_name.clone()];
+        if let Some(reason) = reason {
+            part_params.push(reason.to_string());
+        }
+        
+        let part_message = Message::with_prefix(
+            Prefix::User {
+                nick: user.nick.clone(),
+                user: user.username.clone(),
+                host: user.host.clone(),
+            },
+            MessageType::Part,
+            part_params,
+        );
+        
+        let broadcast = BroadcastMessage {
+            message: part_message,
+            target: BroadcastTarget::Channel(channel_name.clone()),
+            sender: Some(user.id),
+            priority: BroadcastPriority::Normal,
+        };
+        
+        let mut broadcast_system = self.broadcast_system.write().await;
+        broadcast_system.queue_message(broadcast)?;
+        
+        // Unsubscribe user from channel
+        broadcast_system.unsubscribe_from_channel(&user.id, channel_name);
+        
+        // If channel is empty, remove it
+        if channel.member_count() == 0 {
+            let mut channels = self.channels.write().await;
+            channels.remove(channel_name);
+            tracing::info!("Channel {} removed (empty)", channel_name);
+        }
+        
+        tracing::info!("User {} left channel {}", user.nick, channel_name);
         Ok(())
     }
     
@@ -476,9 +678,220 @@ impl ChannelModule {
         
         let target = &message.params[0];
         
-        // TODO: Implement mode logic
-        tracing::info!("Client {} setting mode on {}", client.id, target);
+        // Get user from database
+        let database = self.database.read().await;
+        let user = database.get_user(&client.id)
+            .ok_or_else(|| Error::User("User not found".to_string()))?;
         
+        // Check if target is a channel
+        if self.is_valid_channel_name(target) {
+            self.handle_channel_mode(&user, target, &message.params[1..]).await?;
+        } else {
+            // User mode - not implemented yet
+            return Err(Error::User("User modes not implemented".to_string()));
+        }
+        
+        Ok(())
+    }
+    
+    async fn handle_channel_mode(&self, user: &User, channel_name: &str, params: &[String]) -> Result<()> {
+        let mut channels = self.channels.write().await;
+        
+        // Get channel
+        let mut channel = channels.get_mut(channel_name)
+            .ok_or_else(|| Error::User("No such channel".to_string()))?
+            .clone();
+        
+        // Check if user is in the channel
+        if !channel.has_member(&user.id) {
+            return Err(Error::User("You're not on that channel".to_string()));
+        }
+        
+        // If no mode parameters, just show current modes
+        if params.is_empty() {
+            let modes = channel.modes_string();
+            let mode_params = self.get_mode_params(&channel);
+            
+            // Send mode reply to user
+            let _mode_reply = self.channel_mode_is(channel_name, &modes, &mode_params);
+            // TODO: Send reply to client
+            
+            return Ok(());
+        }
+        
+        // Check if user is an operator
+        if !channel.is_operator(&user.id) {
+            return Err(Error::User("You're not channel operator".to_string()));
+        }
+        
+        // Parse mode changes
+        let mode_string = &params[0];
+        let mode_params = &params[1..];
+        
+        let (add_modes, remove_modes, mode_param_map) = self.parse_mode_string(mode_string, mode_params)?;
+        
+        let mut changes = Vec::new();
+        
+        // Apply mode changes
+        for mode in &add_modes {
+            match mode {
+                'o' => {
+                    if let Some(nick) = mode_param_map.get(&mode) {
+                        if let Some(target_user) = self.get_user_by_nick(nick).await? {
+                            if channel.has_member(&target_user.id) {
+                                channel.set_operator(&target_user.id, true)?;
+                                changes.push(format!("+o {}", nick));
+                            }
+                        }
+                    }
+                }
+                'v' => {
+                    if let Some(nick) = mode_param_map.get(&mode) {
+                        if let Some(target_user) = self.get_user_by_nick(nick).await? {
+                            if channel.has_member(&target_user.id) {
+                                if let Some(member) = channel.members.get_mut(&target_user.id) {
+                                    member.add_mode('v');
+                                    changes.push(format!("+v {}", nick));
+                                }
+                            }
+                        }
+                    }
+                }
+                'k' => {
+                    if let Some(key) = mode_param_map.get(&mode) {
+                        channel.set_key(Some(key.clone()));
+                        changes.push("+k".to_string());
+                    }
+                }
+                'l' => {
+                    if let Some(limit_str) = mode_param_map.get(&mode) {
+                        if let Ok(limit) = limit_str.parse::<usize>() {
+                            channel.set_user_limit(Some(limit));
+                            changes.push(format!("+l {}", limit));
+                        }
+                    }
+                }
+                'b' => {
+                    if let Some(ban_mask) = mode_param_map.get(&mode) {
+                        channel.ban_masks.insert(ban_mask.clone());
+                        changes.push(format!("+b {}", ban_mask));
+                    }
+                }
+                'e' => {
+                    if let Some(except_mask) = mode_param_map.get(&mode) {
+                        channel.exception_masks.insert(except_mask.clone());
+                        changes.push(format!("+e {}", except_mask));
+                    }
+                }
+                'I' => {
+                    if let Some(invite_mask) = mode_param_map.get(&mode) {
+                        channel.invite_masks.insert(invite_mask.clone());
+                        changes.push(format!("+I {}", invite_mask));
+                    }
+                }
+                'i' | 'm' | 'n' | 'p' | 's' | 't' => {
+                    channel.add_mode(*mode);
+                    changes.push(format!("+{}", mode));
+                }
+                _ => return Err(Error::User("Unknown mode".to_string())),
+            }
+        }
+        
+        for mode in &remove_modes {
+            match mode {
+                'o' => {
+                    if let Some(nick) = mode_param_map.get(&mode) {
+                        if let Some(target_user) = self.get_user_by_nick(nick).await? {
+                            if channel.has_member(&target_user.id) {
+                                channel.set_operator(&target_user.id, false)?;
+                                changes.push(format!("-o {}", nick));
+                            }
+                        }
+                    }
+                }
+                'v' => {
+                    if let Some(nick) = mode_param_map.get(&mode) {
+                        if let Some(target_user) = self.get_user_by_nick(nick).await? {
+                            if channel.has_member(&target_user.id) {
+                                if let Some(member) = channel.members.get_mut(&target_user.id) {
+                                    member.remove_mode('v');
+                                    changes.push(format!("-v {}", nick));
+                                }
+                            }
+                        }
+                    }
+                }
+                'k' => {
+                    channel.set_key(None);
+                    changes.push("-k".to_string());
+                }
+                'l' => {
+                    channel.set_user_limit(None);
+                    changes.push("-l".to_string());
+                }
+                'b' => {
+                    if let Some(ban_mask) = mode_param_map.get(&mode) {
+                        channel.ban_masks.remove(ban_mask);
+                        changes.push(format!("-b {}", ban_mask));
+                    }
+                }
+                'e' => {
+                    if let Some(except_mask) = mode_param_map.get(&mode) {
+                        channel.exception_masks.remove(except_mask);
+                        changes.push(format!("-e {}", except_mask));
+                    }
+                }
+                'I' => {
+                    if let Some(invite_mask) = mode_param_map.get(&mode) {
+                        channel.invite_masks.remove(invite_mask);
+                        changes.push(format!("-I {}", invite_mask));
+                    }
+                }
+                'i' | 'm' | 'n' | 'p' | 's' | 't' => {
+                    channel.remove_mode(*mode);
+                    changes.push(format!("-{}", mode));
+                }
+                _ => return Err(Error::User("Unknown mode".to_string())),
+            }
+        }
+        
+        // Update channel
+        channels.insert(channel_name.to_string(), channel.clone());
+        
+        // Broadcast mode change to channel
+        if !changes.is_empty() {
+            let changes_str = changes.join(" ");
+            let mut mode_params = vec![channel_name.to_string(), changes_str];
+            
+            // Add mode parameters
+            for (mode, param) in &mode_param_map {
+                if add_modes.contains(mode) || remove_modes.contains(mode) {
+                    mode_params.push(param.clone());
+                }
+            }
+            
+            let mode_message = Message::with_prefix(
+                Prefix::User {
+                    nick: user.nick.clone(),
+                    user: user.username.clone(),
+                    host: user.host.clone(),
+                },
+                MessageType::Mode,
+                mode_params,
+            );
+            
+            let broadcast = BroadcastMessage {
+                message: mode_message,
+                target: BroadcastTarget::Channel(channel_name.to_string()),
+                sender: Some(user.id),
+                priority: BroadcastPriority::Normal,
+            };
+            
+            let mut broadcast_system = self.broadcast_system.write().await;
+            broadcast_system.queue_message(broadcast)?;
+        }
+        
+        tracing::info!("User {} changed modes on channel {}: {:?}", user.nick, channel_name, changes);
         Ok(())
     }
     
@@ -493,9 +906,73 @@ impl ChannelModule {
         
         let channel_name = &message.params[0];
         
-        // TODO: Implement topic logic
-        tracing::info!("Client {} setting topic on {}", client.id, channel_name);
+        // Get user from database
+        let database = self.database.read().await;
+        let user = database.get_user(&client.id)
+            .ok_or_else(|| Error::User("User not found".to_string()))?;
         
+        // Check if user is in the channel
+        let user_channels = database.get_user_channels(&user.nick);
+        if !user_channels.contains(channel_name) {
+            return Err(Error::User("You're not on that channel".to_string()));
+        }
+        
+        let mut channels = self.channels.write().await;
+        
+        // Get channel
+        let mut channel = channels.get_mut(channel_name)
+            .ok_or_else(|| Error::User("No such channel".to_string()))?
+            .clone();
+        
+        // If no topic provided, show current topic
+        if message.params.len() == 1 {
+            if let Some(ref topic) = channel.topic {
+                let _topic_reply = self.topic(channel_name, topic);
+                // TODO: Send reply to client
+                tracing::info!("User {} requested topic for channel {}", user.nick, channel_name);
+            } else {
+                let _no_topic_reply = self.no_topic(channel_name);
+                // TODO: Send reply to client
+                tracing::info!("User {} requested topic for channel {} (no topic set)", user.nick, channel_name);
+            }
+            return Ok(());
+        }
+        
+        // Check if user has permission to set topic
+        if channel.topic_ops_only() && !channel.is_operator(&user.id) {
+            return Err(Error::User("You're not channel operator".to_string()));
+        }
+        
+        // Set new topic
+        let new_topic = &message.params[1];
+        let setter = format!("{}!{}@{}", user.nick, user.username, user.host);
+        channel.set_topic(new_topic.to_string(), setter);
+        
+        // Update channel
+        channels.insert(channel_name.to_string(), channel.clone());
+        
+        // Broadcast topic change to channel
+        let topic_message = Message::with_prefix(
+            Prefix::User {
+                nick: user.nick.clone(),
+                user: user.username.clone(),
+                host: user.host.clone(),
+            },
+            MessageType::Topic,
+            vec![channel_name.to_string(), new_topic.to_string()],
+        );
+        
+        let broadcast = BroadcastMessage {
+            message: topic_message,
+            target: BroadcastTarget::Channel(channel_name.to_string()),
+            sender: Some(user.id),
+            priority: BroadcastPriority::Normal,
+        };
+        
+        let mut broadcast_system = self.broadcast_system.write().await;
+        broadcast_system.queue_message(broadcast)?;
+        
+        tracing::info!("User {} set topic on channel {}: {}", user.nick, channel_name, new_topic);
         Ok(())
     }
     
@@ -504,8 +981,73 @@ impl ChannelModule {
             return Err(Error::User("Client not registered".to_string()));
         }
         
-        // TODO: Implement names logic
-        tracing::info!("Client {} requesting names", client.id);
+        // Get user from database
+        let database = self.database.read().await;
+        let user = database.get_user(&client.id)
+            .ok_or_else(|| Error::User("User not found".to_string()))?;
+        
+        let channels = self.channels.read().await;
+        
+        // If no channels specified, show names for all channels user is in
+        let channels_to_show = if message.params.is_empty() {
+            database.get_user_channels(&user.nick)
+        } else {
+            message.params.clone()
+        };
+        
+        for channel_name in channels_to_show {
+            if let Some(channel) = channels.get(&channel_name) {
+                // Check if user can see this channel
+                if channel.is_secret() && !channel.has_member(&user.id) {
+                    continue; // Skip secret channels user is not in
+                }
+                
+                // Get member names with prefixes
+                let mut names = Vec::new();
+                for (member_id, member) in &channel.members {
+                    if let Some(member_user) = database.get_user(member_id) {
+                        let mut name = String::new();
+                        
+                        // Add prefixes based on modes
+                        if member.is_operator() {
+                            name.push('@');
+                        } else if member.is_voice() {
+                            name.push('+');
+                        }
+                        
+                        name.push_str(&member_user.nick);
+                        names.push(name);
+                    }
+                }
+                
+                // Sort names (operators first, then voiced users, then regular users)
+                names.sort_by(|a, b| {
+                    let a_prefix = a.chars().next().unwrap_or(' ');
+                    let b_prefix = b.chars().next().unwrap_or(' ');
+                    
+                    match (a_prefix, b_prefix) {
+                        ('@', '@') => a.cmp(b),
+                        ('@', _) => std::cmp::Ordering::Less,
+                        (_, '@') => std::cmp::Ordering::Greater,
+                        ('+', '+') => a.cmp(b),
+                        ('+', _) => std::cmp::Ordering::Less,
+                        (_, '+') => std::cmp::Ordering::Greater,
+                        _ => a.cmp(b),
+                    }
+                });
+                
+                // Send names reply (split into multiple messages if too long)
+                let names_str = names.join(" ");
+                let _names_reply = self.names_reply(&channel_name, &names_str);
+                // TODO: Send reply to client
+                
+                // Send end of names
+                let _end_reply = self.end_of_names(&channel_name);
+                // TODO: Send reply to client
+                
+                tracing::info!("Sent names for channel {} to user {}", channel_name, user.nick);
+            }
+        }
         
         Ok(())
     }
@@ -515,9 +1057,57 @@ impl ChannelModule {
             return Err(Error::User("Client not registered".to_string()));
         }
         
-        // TODO: Implement list logic
-        tracing::info!("Client {} requesting channel list", client.id);
+        // Get user from database
+        let database = self.database.read().await;
+        let user = database.get_user(&client.id)
+            .ok_or_else(|| Error::User("User not found".to_string()))?;
         
+        let channels = self.channels.read().await;
+        
+        // Send list start
+        let _list_start = self.list_start();
+        // TODO: Send reply to client
+        
+        // Get channels to list
+        let channels_to_list = if message.params.is_empty() {
+            // List all channels
+            channels.keys().cloned().collect()
+        } else {
+            // List specific channels
+            message.params.clone()
+        };
+        
+        for channel_name in channels_to_list {
+            if let Some(channel) = channels.get(&channel_name) {
+                // Check if channel should be visible to user
+                let visible = if channel.is_secret() {
+                    // Only show secret channels if user is a member
+                    channel.has_member(&user.id)
+                } else if channel.is_private() {
+                    // Only show private channels if user is a member
+                    channel.has_member(&user.id)
+                } else {
+                    // Public channels are always visible
+                    true
+                };
+                
+                if visible {
+                    let topic = channel.topic.as_deref().unwrap_or("");
+                    let member_count = channel.member_count();
+                    
+                    let _list_reply = self.list(&channel_name, &member_count.to_string(), topic);
+                    // TODO: Send reply to client
+                    
+                    tracing::debug!("Listed channel {} to user {}", channel_name, user.nick);
+                }
+            }
+        }
+        
+        // Send list end
+        let _list_end = self.list_end();
+        // TODO: Send reply to client
+        
+        tracing::info!("Sent channel list to user {}", user.nick);
         Ok(())
     }
     
@@ -531,11 +1121,71 @@ impl ChannelModule {
         }
         
         let nick = &message.params[0];
-        let channel = &message.params[1];
+        let channel_name = &message.params[1];
         
-        // TODO: Implement invite logic
-        tracing::info!("Client {} inviting {} to {}", client.id, nick, channel);
+        // Get user from database
+        let database = self.database.read().await;
+        let user = database.get_user(&client.id)
+            .ok_or_else(|| Error::User("User not found".to_string()))?;
         
+        // Check if user is in the channel
+        let user_channels = database.get_user_channels(&user.nick);
+        if !user_channels.contains(channel_name) {
+            return Err(Error::User("You're not on that channel".to_string()));
+        }
+        
+        // Check if target user exists
+        let _target_user = database.get_user_by_nick(nick)
+            .ok_or_else(|| Error::User("No such nick".to_string()))?;
+        
+        // Check if target user is already in the channel
+        let target_channels = database.get_user_channels(nick);
+        if target_channels.contains(channel_name) {
+            return Err(Error::User("is already on channel".to_string()));
+        }
+        
+        let channels = self.channels.read().await;
+        
+        // Get channel
+        let channel = channels.get(channel_name)
+            .ok_or_else(|| Error::User("No such channel".to_string()))?;
+        
+        // Check if user has permission to invite
+        if channel.is_operator(&user.id) || !channel.is_invite_only() {
+            // User is an operator or channel is not invite-only
+        } else {
+            return Err(Error::User("You're not channel operator".to_string()));
+        }
+        
+        // Add invite to invite list
+        self.add_invite(nick, channel_name).await;
+        
+        // Send INVITE message to target user
+        let invite_message = Message::with_prefix(
+            Prefix::User {
+                nick: user.nick.clone(),
+                user: user.username.clone(),
+                host: user.host.clone(),
+            },
+            MessageType::Invite,
+            vec![nick.to_string(), channel_name.to_string()],
+        );
+        
+        let broadcast = BroadcastMessage {
+            message: invite_message,
+            target: BroadcastTarget::Users(vec![nick.to_string()]),
+            sender: Some(user.id),
+            priority: BroadcastPriority::Normal,
+        };
+        
+        let mut broadcast_system = self.broadcast_system.write().await;
+        broadcast_system.queue_message(broadcast)?;
+        
+        // Send confirmation to inviting user
+        let _inviting_reply = self.inviting(nick, channel_name);
+        // TODO: Send reply to client
+        
+        tracing::info!("User {} invited {} to channel {}", user.nick, nick, channel_name);
         Ok(())
     }
     
@@ -548,12 +1198,96 @@ impl ChannelModule {
             return Err(Error::User("Not enough parameters".to_string()));
         }
         
-        let channel = &message.params[0];
+        let channel_name = &message.params[0];
         let nick = &message.params[1];
+        let reason = message.params.get(2).map(|s| s.as_str());
         
-        // TODO: Implement kick logic
-        tracing::info!("Client {} kicking {} from {}", client.id, nick, channel);
+        // Get user from database
+        let database = self.database.read().await;
+        let user = database.get_user(&client.id)
+            .ok_or_else(|| Error::User("User not found".to_string()))?;
         
+        // Check if user is in the channel
+        let user_channels = database.get_user_channels(&user.nick);
+        if !user_channels.contains(channel_name) {
+            return Err(Error::User("You're not on that channel".to_string()));
+        }
+        
+        // Check if target user exists
+        let target_user = database.get_user_by_nick(nick)
+            .ok_or_else(|| Error::User("No such nick".to_string()))?;
+        
+        // Check if target user is in the channel
+        let target_channels = database.get_user_channels(nick);
+        if !target_channels.contains(channel_name) {
+            return Err(Error::User("They aren't on that channel".to_string()));
+        }
+        
+        let mut channels = self.channels.write().await;
+        
+        // Get channel
+        let mut channel = channels.get_mut(channel_name)
+            .ok_or_else(|| Error::User("No such channel".to_string()))?
+            .clone();
+        
+        // Check if user has permission to kick
+        if !channel.is_operator(&user.id) {
+            return Err(Error::User("You're not channel operator".to_string()));
+        }
+        
+        // Remove target user from channel
+        channel.remove_member(&target_user.id);
+        
+        // Update channel
+        channels.insert(channel_name.to_string(), channel.clone());
+        
+        // Update database
+        drop(channels);
+        drop(database);
+        
+        let database = self.database.write().await;
+        database.remove_user_from_channel(nick, channel_name)?;
+        
+        // Remove from invite list if present
+        self.remove_invite(nick, channel_name).await;
+        
+        // Broadcast KICK message to channel
+        let mut kick_params = vec![channel_name.to_string(), nick.to_string()];
+        if let Some(reason) = reason {
+            kick_params.push(reason.to_string());
+        }
+        
+        let kick_message = Message::with_prefix(
+            Prefix::User {
+                nick: user.nick.clone(),
+                user: user.username.clone(),
+                host: user.host.clone(),
+            },
+            MessageType::Kick,
+            kick_params,
+        );
+        
+        let broadcast = BroadcastMessage {
+            message: kick_message,
+            target: BroadcastTarget::Channel(channel_name.to_string()),
+            sender: Some(user.id),
+            priority: BroadcastPriority::Normal,
+        };
+        
+        let mut broadcast_system = self.broadcast_system.write().await;
+        broadcast_system.queue_message(broadcast)?;
+        
+        // Unsubscribe target user from channel
+        broadcast_system.unsubscribe_from_channel(&target_user.id, channel_name);
+        
+        // If channel is empty, remove it
+        if channel.member_count() == 0 {
+            let mut channels = self.channels.write().await;
+            channels.remove(channel_name);
+            tracing::info!("Channel {} removed (empty after kick)", channel_name);
+        }
+        
+        tracing::info!("User {} kicked {} from channel {}", user.nick, nick, channel_name);
         Ok(())
     }
     
@@ -738,5 +1472,407 @@ impl ChannelModule {
             rustircd_core::MessageType::Custom("366".to_string()),
             vec!["*".to_string(), channel.to_string(), "End of /NAMES list".to_string()],
         )
+    }
+    
+    // Helper methods
+    
+    /// Check if a string is a valid channel name
+    fn is_valid_channel_name(&self, name: &str) -> bool {
+        if name.is_empty() || name.len() > 50 {
+            return false;
+        }
+        
+        // Channel names must start with #, &, +, or !
+        match name.chars().next() {
+            Some('#') | Some('&') | Some('+') | Some('!') => {},
+            _ => return false,
+        }
+        
+        // Check for invalid characters
+        for c in name.chars().skip(1) {
+            if c == ' ' || c == ',' || c == 7 as char { // 7 = BELL character
+                return false;
+            }
+        }
+        
+        true
+    }
+    
+    /// Check if user is invited to a channel
+    async fn is_user_invited(&self, nick: &str, channel: &str) -> bool {
+        let invite_list = self.invite_list.read().await;
+        invite_list.get(nick)
+            .map(|channels| channels.contains(channel))
+            .unwrap_or(false)
+    }
+    
+    /// Add user to invite list
+    async fn add_invite(&self, nick: &str, channel: &str) {
+        let mut invite_list = self.invite_list.write().await;
+        invite_list.entry(nick.to_string())
+            .or_insert_with(HashSet::new)
+            .insert(channel.to_string());
+    }
+    
+    /// Remove user from invite list
+    async fn remove_invite(&self, nick: &str, channel: &str) {
+        let mut invite_list = self.invite_list.write().await;
+        if let Some(channels) = invite_list.get_mut(nick) {
+            channels.remove(channel);
+            if channels.is_empty() {
+                invite_list.remove(nick);
+            }
+        }
+    }
+    
+    /// Check if user is banned from channel
+    async fn is_user_banned(&self, user: &User, channel: &Channel) -> bool {
+        // Check ban masks
+        for ban_mask in &channel.ban_masks {
+            if self.matches_mask(user, ban_mask) {
+                // Check exception masks
+                for except_mask in &channel.exception_masks {
+                    if self.matches_mask(user, except_mask) {
+                        return false; // Exception overrides ban
+                    }
+                }
+                return true; // User is banned
+            }
+        }
+        false
+    }
+    
+    /// Check if user matches a mask (nick!user@host format)
+    fn matches_mask(&self, user: &User, mask: &str) -> bool {
+        let user_mask = format!("{}!{}@{}", user.nick, user.username, user.host);
+        self.matches_pattern(&user_mask, mask)
+    }
+    
+    /// Simple pattern matching for IRC masks
+    fn matches_pattern(&self, text: &str, pattern: &str) -> bool {
+        if pattern == "*" {
+            return true;
+        }
+        
+        let text_chars: Vec<char> = text.chars().collect();
+        let pattern_chars: Vec<char> = pattern.chars().collect();
+        
+        self.matches_pattern_recursive(&text_chars, &pattern_chars, 0, 0)
+    }
+    
+    fn matches_pattern_recursive(&self, text: &[char], pattern: &[char], text_idx: usize, pattern_idx: usize) -> bool {
+        if pattern_idx >= pattern.len() {
+            return text_idx >= text.len();
+        }
+        
+        match pattern[pattern_idx] {
+            '*' => {
+                // Try matching * with 0 or more characters
+                for i in text_idx..=text.len() {
+                    if self.matches_pattern_recursive(text, pattern, i, pattern_idx + 1) {
+                        return true;
+                    }
+                }
+                false
+            }
+            '?' => {
+                // Match any single character
+                if text_idx < text.len() {
+                    self.matches_pattern_recursive(text, pattern, text_idx + 1, pattern_idx + 1)
+                } else {
+                    false
+                }
+            }
+            c => {
+                // Match exact character (case-insensitive)
+                if text_idx < text.len() && text[text_idx].to_lowercase().next() == c.to_lowercase().next() {
+                    self.matches_pattern_recursive(text, pattern, text_idx + 1, pattern_idx + 1)
+                } else {
+                    false
+                }
+            }
+        }
+    }
+    
+    /// Get user by nickname
+    async fn get_user_by_nick(&self, nick: &str) -> Result<Option<User>> {
+        let database = self.database.read().await;
+        Ok(database.get_user_by_nick(nick))
+    }
+    
+    /// Get mode parameters for a channel
+    fn get_mode_params(&self, channel: &Channel) -> String {
+        let mut params = Vec::new();
+        
+        if let Some(ref key) = channel.key {
+            params.push(key.clone());
+        }
+        
+        if let Some(limit) = channel.user_limit {
+            params.push(limit.to_string());
+        }
+        
+        params.join(" ")
+    }
+    
+    /// Parse mode string and parameters
+    fn parse_mode_string(&self, mode_string: &str, mode_params: &[String]) -> Result<(Vec<char>, Vec<char>, HashMap<char, String>)> {
+        let mut add_modes = Vec::new();
+        let mut remove_modes = Vec::new();
+        let mut mode_param_map = HashMap::new();
+        
+        let mut chars = mode_string.chars();
+        let mut adding = true;
+        let mut param_idx = 0;
+        
+        while let Some(c) = chars.next() {
+            match c {
+                '+' => adding = true,
+                '-' => adding = false,
+                'o' | 'v' | 'k' | 'l' | 'b' | 'e' | 'I' => {
+                    if adding {
+                        add_modes.push(c);
+                    } else {
+                        remove_modes.push(c);
+                    }
+                    
+                    // These modes require parameters
+                    if param_idx < mode_params.len() {
+                        mode_param_map.insert(c, mode_params[param_idx].clone());
+                        param_idx += 1;
+                    }
+                }
+                'i' | 'm' | 'n' | 'p' | 's' | 't' => {
+                    if adding {
+                        add_modes.push(c);
+                    } else {
+                        remove_modes.push(c);
+                    }
+                }
+                _ => return Err(Error::User("Unknown mode character".to_string())),
+            }
+        }
+        
+        Ok((add_modes, remove_modes, mode_param_map))
+    }
+    
+    // Notification methods
+    
+    /// Notify channel members of a user joining
+    async fn notify_user_joined(&self, user: &User, channel_name: &str) -> Result<()> {
+        let join_message = Message::with_prefix(
+            Prefix::User {
+                nick: user.nick.clone(),
+                user: user.username.clone(),
+                host: user.host.clone(),
+            },
+            MessageType::Join,
+            vec![channel_name.to_string()],
+        );
+        
+        let broadcast = BroadcastMessage {
+            message: join_message,
+            target: BroadcastTarget::Channel(channel_name.to_string()),
+            sender: Some(user.id),
+            priority: BroadcastPriority::Normal,
+        };
+        
+        let mut broadcast_system = self.broadcast_system.write().await;
+        broadcast_system.queue_message(broadcast)?;
+        
+        tracing::info!("Notified channel {} of user {} joining", channel_name, user.nick);
+        Ok(())
+    }
+    
+    /// Notify channel members of a user leaving
+    async fn notify_user_left(&self, user: &User, channel_name: &str, reason: Option<&str>) -> Result<()> {
+        let mut part_params = vec![channel_name.to_string()];
+        if let Some(reason) = reason {
+            part_params.push(reason.to_string());
+        }
+        
+        let part_message = Message::with_prefix(
+            Prefix::User {
+                nick: user.nick.clone(),
+                user: user.username.clone(),
+                host: user.host.clone(),
+            },
+            MessageType::Part,
+            part_params,
+        );
+        
+        let broadcast = BroadcastMessage {
+            message: part_message,
+            target: BroadcastTarget::Channel(channel_name.to_string()),
+            sender: Some(user.id),
+            priority: BroadcastPriority::Normal,
+        };
+        
+        let mut broadcast_system = self.broadcast_system.write().await;
+        broadcast_system.queue_message(broadcast)?;
+        
+        tracing::info!("Notified channel {} of user {} leaving", channel_name, user.nick);
+        Ok(())
+    }
+    
+    /// Notify channel members of a user being kicked
+    async fn notify_user_kicked(&self, kicker: &User, kicked_user: &User, channel_name: &str, reason: Option<&str>) -> Result<()> {
+        let mut kick_params = vec![channel_name.to_string(), kicked_user.nick.clone()];
+        if let Some(reason) = reason {
+            kick_params.push(reason.to_string());
+        }
+        
+        let kick_message = Message::with_prefix(
+            Prefix::User {
+                nick: kicker.nick.clone(),
+                user: kicker.username.clone(),
+                host: kicker.host.clone(),
+            },
+            MessageType::Kick,
+            kick_params,
+        );
+        
+        let broadcast = BroadcastMessage {
+            message: kick_message,
+            target: BroadcastTarget::Channel(channel_name.to_string()),
+            sender: Some(kicker.id),
+            priority: BroadcastPriority::Normal,
+        };
+        
+        let mut broadcast_system = self.broadcast_system.write().await;
+        broadcast_system.queue_message(broadcast)?;
+        
+        tracing::info!("Notified channel {} of user {} being kicked by {}", channel_name, kicked_user.nick, kicker.nick);
+        Ok(())
+    }
+    
+    /// Notify channel members of a topic change
+    async fn notify_topic_changed(&self, user: &User, channel_name: &str, topic: &str) -> Result<()> {
+        let topic_message = Message::with_prefix(
+            Prefix::User {
+                nick: user.nick.clone(),
+                user: user.username.clone(),
+                host: user.host.clone(),
+            },
+            MessageType::Topic,
+            vec![channel_name.to_string(), topic.to_string()],
+        );
+        
+        let broadcast = BroadcastMessage {
+            message: topic_message,
+            target: BroadcastTarget::Channel(channel_name.to_string()),
+            sender: Some(user.id),
+            priority: BroadcastPriority::Normal,
+        };
+        
+        let mut broadcast_system = self.broadcast_system.write().await;
+        broadcast_system.queue_message(broadcast)?;
+        
+        tracing::info!("Notified channel {} of topic change by user {}", channel_name, user.nick);
+        Ok(())
+    }
+    
+    /// Notify channel members of mode changes
+    async fn notify_mode_changed(&self, user: &User, channel_name: &str, mode_string: &str, mode_params: Vec<String>) -> Result<()> {
+        let mut mode_message_params = vec![channel_name.to_string(), mode_string.to_string()];
+        mode_message_params.extend(mode_params);
+        
+        let mode_message = Message::with_prefix(
+            Prefix::User {
+                nick: user.nick.clone(),
+                user: user.username.clone(),
+                host: user.host.clone(),
+            },
+            MessageType::Mode,
+            mode_message_params,
+        );
+        
+        let broadcast = BroadcastMessage {
+            message: mode_message,
+            target: BroadcastTarget::Channel(channel_name.to_string()),
+            sender: Some(user.id),
+            priority: BroadcastPriority::Normal,
+        };
+        
+        let mut broadcast_system = self.broadcast_system.write().await;
+        broadcast_system.queue_message(broadcast)?;
+        
+        tracing::info!("Notified channel {} of mode change by user {}", channel_name, user.nick);
+        Ok(())
+    }
+    
+    /// Notify user of channel invitation
+    async fn notify_invitation(&self, inviter: &User, target_user: &User, channel_name: &str) -> Result<()> {
+        let invite_message = Message::with_prefix(
+            Prefix::User {
+                nick: inviter.nick.clone(),
+                user: inviter.username.clone(),
+                host: inviter.host.clone(),
+            },
+            MessageType::Invite,
+            vec![target_user.nick.clone(), channel_name.to_string()],
+        );
+        
+        let broadcast = BroadcastMessage {
+            message: invite_message,
+            target: BroadcastTarget::Users(vec![target_user.nick.clone()]),
+            sender: Some(inviter.id),
+            priority: BroadcastPriority::Normal,
+        };
+        
+        let mut broadcast_system = self.broadcast_system.write().await;
+        broadcast_system.queue_message(broadcast)?;
+        
+        tracing::info!("Notified user {} of invitation to channel {} by {}", target_user.nick, channel_name, inviter.nick);
+        Ok(())
+    }
+    
+    /// Notify all users when a channel is created
+    async fn notify_channel_created(&self, creator: &User, channel_name: &str) -> Result<()> {
+        tracing::info!("Channel {} created by user {}", channel_name, creator.nick);
+        
+        // Channel creation is typically only visible to the creator
+        // Additional notifications could be added here if needed
+        Ok(())
+    }
+    
+    /// Notify all users when a channel is destroyed
+    async fn notify_channel_destroyed(&self, channel_name: &str, reason: Option<&str>) -> Result<()> {
+        // This would typically be used when the last user leaves a channel
+        // or when a server admin destroys a channel
+        tracing::info!("Channel {} destroyed. Reason: {:?}", channel_name, reason);
+        
+        // Additional cleanup and notifications could be added here
+        Ok(())
+    }
+    
+    /// Send error message to a specific user
+    async fn send_error_to_user(&self, user_id: Uuid, error_message: Message) -> Result<()> {
+        let broadcast = BroadcastMessage {
+            message: error_message,
+            target: BroadcastTarget::Users(vec![user_id.to_string()]),
+            sender: None,
+            priority: BroadcastPriority::High,
+        };
+        
+        let mut broadcast_system = self.broadcast_system.write().await;
+        broadcast_system.queue_message(broadcast)?;
+        
+        Ok(())
+    }
+    
+    /// Send reply message to a specific user
+    async fn send_reply_to_user(&self, user_id: Uuid, reply_message: Message) -> Result<()> {
+        let broadcast = BroadcastMessage {
+            message: reply_message,
+            target: BroadcastTarget::Users(vec![user_id.to_string()]),
+            sender: None,
+            priority: BroadcastPriority::Normal,
+        };
+        
+        let mut broadcast_system = self.broadcast_system.write().await;
+        broadcast_system.queue_message(broadcast)?;
+        
+        Ok(())
     }
 }

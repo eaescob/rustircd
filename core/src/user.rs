@@ -1,6 +1,7 @@
 //! User management and tracking
 
 use crate::Prefix;
+use crate::config::OperatorFlag;
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -47,6 +48,8 @@ pub struct User {
     pub registered: bool,
     /// Whether user is an operator
     pub is_operator: bool,
+    /// Operator flags (if user is an operator)
+    pub operator_flags: HashSet<OperatorFlag>,
     /// Away message (if any)
     pub away_message: Option<String>,
     /// Whether user is a bot (IRCv3 bot-mode)
@@ -72,6 +75,7 @@ impl User {
             channels: HashSet::new(),
             registered: false,
             is_operator: false,
+            operator_flags: HashSet::new(),
             away_message: None,
             is_bot: false,
             bot_info: None,
@@ -188,5 +192,46 @@ impl User {
         } else {
             None
         }
+    }
+
+    /// Set operator flags
+    pub fn set_operator_flags(&mut self, flags: HashSet<OperatorFlag>) {
+        self.is_operator = !flags.is_empty();
+        self.operator_flags = flags;
+    }
+    
+    /// Check if user has a specific operator flag
+    pub fn has_operator_flag(&self, flag: OperatorFlag) -> bool {
+        self.operator_flags.contains(&flag)
+    }
+    
+    /// Check if user is a global operator
+    pub fn is_global_oper(&self) -> bool {
+        self.has_operator_flag(OperatorFlag::GlobalOper)
+    }
+    
+    /// Check if user is a local operator
+    pub fn is_local_oper(&self) -> bool {
+        self.has_operator_flag(OperatorFlag::LocalOper)
+    }
+    
+    /// Check if user can do remote connect
+    pub fn can_remote_connect(&self) -> bool {
+        self.has_operator_flag(OperatorFlag::RemoteConnect)
+    }
+    
+    /// Check if user can do local connect
+    pub fn can_local_connect(&self) -> bool {
+        self.has_operator_flag(OperatorFlag::LocalConnect)
+    }
+    
+    /// Check if user is administrator
+    pub fn is_administrator(&self) -> bool {
+        self.has_operator_flag(OperatorFlag::Administrator)
+    }
+    
+    /// Check if user has spy privileges
+    pub fn is_spy(&self) -> bool {
+        self.has_operator_flag(OperatorFlag::Spy)
     }
 }

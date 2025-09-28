@@ -1,7 +1,7 @@
 //! Example service implementation
 
 use crate::{Service, ServiceResult};
-use rustircd_core::{Client, Message, User, Error, Result};
+use rustircd_core::{Client, Message, User, Result};
 use async_trait::async_trait;
 
 /// Example service that demonstrates the service framework
@@ -96,7 +96,7 @@ impl ExampleService {
         tracing::info!("Client {} requested services list", client.id);
         
         // TODO: Send services list to client
-        let response = Message::new(
+        let _response = Message::new(
             rustircd_core::MessageType::Custom("SERVICES".to_string()),
             vec!["Available services: example, help".to_string()],
         );
@@ -114,7 +114,7 @@ impl ExampleService {
             format!("Help for: {}", message.params.join(" "))
         };
         
-        let response = Message::new(
+        let _response = Message::new(
             rustircd_core::MessageType::Custom("HELP".to_string()),
             vec![help_text],
         );

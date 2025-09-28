@@ -3,7 +3,7 @@
 use rustircd_core::{Config, Server};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use tracing::{info, error};
+use tracing::info;
 
 /// Rust IRC Daemon - A modular IRC server implementation
 #[derive(Parser)]

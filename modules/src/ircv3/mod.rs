@@ -10,7 +10,7 @@ pub mod channel_rename;
 pub mod user_properties;
 pub mod core_integration;
 
-use rustircd_core::{Module, module::ModuleResult, Client, Message, User, Error, Result};
+use rustircd_core::{Module, module::ModuleResult, Client, Message, User, Result};
 use async_trait::async_trait;
 use std::collections::HashSet;
 

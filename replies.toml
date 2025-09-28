@@ -1,0 +1,623 @@
+# IRC Numeric Replies Configuration
+# This file allows server administrators to customize IRC numeric replies
+# while maintaining RFC 1459 compliance. All replies are optional and will
+# fall back to sensible defaults if not specified.
+# 
+# Server information (name, version, description, admin details) is now
+# configured in the main config.toml file under the [server] section.
+
+# Connection registration replies
+[replies.001]
+code = 001
+text = "Welcome to the Internet Relay Network {nick}!{user}@{host}"
+description = "RPL_WELCOME - Welcome message"
+
+[replies.002]
+code = 002
+text = "Your host is {server_name}, running version {server_version}"
+description = "RPL_YOURHOST - Server information"
+
+[replies.003]
+code = 003
+text = "This server was created {server_created}"
+description = "RPL_CREATED - Server creation date"
+
+[replies.004]
+code = 004
+text = "{server_name} {server_version} {usermodes} {channelmodes}"
+description = "RPL_MYINFO - Server capabilities"
+
+# Server queries
+[replies.256]
+code = 256
+text = "{server_name} :Administrative info"
+description = "RPL_ADMINME - Admin info header"
+
+[replies.257]
+code = 257
+text = ":{admin_location1}"
+description = "RPL_ADMINLOC1 - Admin location line 1"
+
+[replies.258]
+code = 258
+text = ":{admin_location2}"
+description = "RPL_ADMINLOC2 - Admin location line 2"
+
+[replies.259]
+code = 259
+text = ":{admin_email}"
+description = "RPL_ADMINEMAIL - Admin email"
+
+[replies.351]
+code = 351
+text = "{server_name} :{server_version} {server_name} :{server_description}"
+description = "RPL_VERSION - Server version info"
+
+# User queries
+[replies.311]
+code = 311
+text = "{nick} {user} {host} * :{realname}"
+description = "RPL_WHOISUSER - User information"
+
+[replies.312]
+code = 312
+text = "{nick} {server_name} :{server_description}"
+description = "RPL_WHOISSERVER - Server information"
+
+[replies.313]
+code = 313
+text = "{nick} :is an IRC operator"
+description = "RPL_WHOISOPERATOR - Operator status"
+
+[replies.315]
+code = 315
+text = "{target} :End of WHO list"
+description = "RPL_ENDOFWHO - End of WHO list"
+
+[replies.318]
+code = 318
+text = "{nick} :End of WHOIS list"
+description = "RPL_ENDOFWHOIS - End of WHOIS list"
+
+[replies.319]
+code = 319
+text = "{nick} :{channels}"
+description = "RPL_WHOISCHANNELS - User channels"
+
+# Channel operations
+[replies.322]
+code = 322
+text = "{channel} {visible} :{topic}"
+description = "RPL_LIST - Channel list entry"
+
+[replies.323]
+code = 323
+text = ":End of LIST"
+description = "RPL_LISTEND - End of LIST"
+
+[replies.331]
+code = 331
+text = "{channel} :No topic is set"
+description = "RPL_NOTOPIC - No topic set"
+
+[replies.332]
+code = 332
+text = "{channel} :{topic}"
+description = "RPL_TOPIC - Channel topic"
+
+[replies.341]
+code = 341
+text = "{nick} {channel}"
+description = "RPL_INVITING - Invitation sent"
+
+[replies.353]
+code = 353
+text = "= {channel} :{names}"
+description = "RPL_NAMREPLY - Channel names list"
+
+[replies.366]
+code = 366
+text = "{channel} :End of NAMES list"
+description = "RPL_ENDOFNAMES - End of NAMES list"
+
+# Error replies
+[replies.401]
+code = 401
+text = "{nick} :No such nick/channel"
+description = "ERR_NOSUCHNICK - No such nick/channel"
+
+[replies.402]
+code = 402
+text = "{server} :No such server"
+description = "ERR_NOSUCHSERVER - No such server"
+
+[replies.403]
+code = 403
+text = "{channel} :No such channel"
+description = "ERR_NOSUCHCHANNEL - No such channel"
+
+[replies.404]
+code = 404
+text = "{channel} :Cannot send to channel"
+description = "ERR_CANNOTSENDTOCHAN - Cannot send to channel"
+
+[replies.405]
+code = 405
+text = "{channel} :You have joined too many channels"
+description = "ERR_TOOMANYCHANNELS - Too many channels"
+
+[replies.421]
+code = 421
+text = "{command} :Unknown command"
+description = "ERR_UNKNOWNCOMMAND - Unknown command"
+
+[replies.422]
+code = 422
+text = ":MOTD File is missing"
+description = "ERR_NOMOTD - No MOTD file"
+
+[replies.431]
+code = 431
+text = ":No nickname given"
+description = "ERR_NONICKNAMEGIVEN - No nickname given"
+
+[replies.432]
+code = 432
+text = "{nick} :Erroneous nickname"
+description = "ERR_ERRONEUSNICKNAME - Erroneous nickname"
+
+[replies.433]
+code = 433
+text = "{nick} :Nickname is already in use"
+description = "ERR_NICKNAMEINUSE - Nickname in use"
+
+[replies.436]
+code = 436
+text = "{nick} :Nickname collision KILL from {server}"
+description = "ERR_NICKCOLLISION - Nickname collision"
+
+[replies.441]
+code = 441
+text = "{nick} {channel} :They aren't on that channel"
+description = "ERR_USERNOTINCHANNEL - User not in channel"
+
+[replies.442]
+code = 442
+text = "{channel} :You're not on that channel"
+description = "ERR_NOTONCHANNEL - Not on channel"
+
+[replies.443]
+code = 443
+text = "{user} {channel} :is already on channel"
+description = "ERR_USERONCHANNEL - User already on channel"
+
+[replies.451]
+code = 451
+text = ":You have not registered"
+description = "ERR_NOTREGISTERED - Not registered"
+
+[replies.461]
+code = 461
+text = "{command} :Not enough parameters"
+description = "ERR_NEEDMOREPARAMS - Need more parameters"
+
+[replies.462]
+code = 462
+text = ":You may not reregister"
+description = "ERR_ALREADYREGISTERED - Already registered"
+
+[replies.463]
+code = 463
+text = ":Your host isn't among the privileged"
+description = "ERR_NOPERMFORHOST - No permission for host"
+
+[replies.464]
+code = 464
+text = ":Password incorrect"
+description = "ERR_PASSWDMISMATCH - Password mismatch"
+
+[replies.465]
+code = 465
+text = ":You are banned from this server"
+description = "ERR_YOUREBANNEDCREEP - Banned from server"
+
+[replies.471]
+code = 471
+text = "{channel} :Cannot join channel (+l)"
+description = "ERR_CHANNELISFULL - Channel is full"
+
+[replies.472]
+code = 472
+text = "{char} :is unknown mode char to me for {channel}"
+description = "ERR_UNKNOWNMODE - Unknown mode"
+
+[replies.473]
+code = 473
+text = "{channel} :Cannot join channel (+i)"
+description = "ERR_INVITEONLYCHAN - Invite only channel"
+
+[replies.474]
+code = 474
+text = "{channel} :Cannot join channel (+b)"
+description = "ERR_BANNEDFROMCHAN - Banned from channel"
+
+[replies.475]
+code = 475
+text = "{channel} :Cannot join channel (+k)"
+description = "ERR_BADCHANNELKEY - Bad channel key"
+
+[replies.476]
+code = 476
+text = "{channel} :Bad channel mask"
+description = "ERR_BADCHANMASK - Bad channel mask"
+
+[replies.477]
+code = 477
+text = "{channel} :Channel doesn't support modes"
+description = "ERR_NOCHANMODES - No channel modes"
+
+[replies.478]
+code = 478
+text = "{channel} {char} :Channel list is full"
+description = "ERR_BANLISTFULL - Ban list full"
+
+[replies.481]
+code = 481
+text = ":Permission Denied- You're not an IRC operator"
+description = "ERR_NOPRIVILEGES - No privileges"
+
+[replies.482]
+code = 482
+text = "{channel} :You're not channel operator"
+description = "ERR_CHANOPRIVSNEEDED - Channel operator privileges needed"
+
+[replies.483]
+code = 483
+text = ":You can't kill a server!"
+description = "ERR_CANTKILLSERVER - Can't kill server"
+
+[replies.484]
+code = 484
+text = ":Your connection is restricted!"
+description = "ERR_RESTRICTED - Connection restricted"
+
+# Operator commands
+[replies.381]
+code = 381
+text = ":You are now an IRC operator"
+description = "RPL_YOUREOPER - You are now an operator"
+
+# Connect command
+[replies.200]
+code = 200
+text = "Link {version} {destination} {next_server} {hopcount} {protocol_version} {flags} {link_data} {link_creation}"
+description = "RPL_CONNECTSUCCESS - Connect success"
+
+[replies.201]
+code = 201
+text = "Try. {class} {server}"
+description = "RPL_CONNECTFAILED - Connect failed"
+
+# Trace replies
+[replies.200]
+code = 200
+text = "Link {version} {destination} {next_server} {hopcount} {protocol_version} {flags} {link_data} {link_creation}"
+description = "RPL_TRACELINK - Trace link information"
+
+[replies.201]
+code = 201
+text = "Try. {class} {server}"
+description = "RPL_TRACECONNECTING - Trace connecting"
+
+[replies.202]
+code = 202
+text = "H.S. {class} {server}"
+description = "RPL_TRACEHANDSHAKE - Trace handshake"
+
+[replies.203]
+code = 203
+text = "???? {class} {client_ip} {client_port} {server_ip} {server_port}"
+description = "RPL_TRACEUNKNOWN - Trace unknown"
+
+[replies.204]
+code = 204
+text = "Oper {class} {nick}"
+description = "RPL_TRACEOPERATOR - Trace operator"
+
+[replies.205]
+code = 205
+text = "User {class} {nick}"
+description = "RPL_TRACEUSER - Trace user"
+
+[replies.206]
+code = 206
+text = "Serv {class} {int}S {int}C {server} {nick}!{user}@{host}"
+description = "RPL_TRACESERVER - Trace server"
+
+[replies.207]
+code = 207
+text = "Service {class} {name} {type} {active_type}"
+description = "RPL_TRACESERVICE - Trace service"
+
+[replies.208]
+code = 208
+text = "{newtype} 0 {client_name}"
+description = "RPL_TRACENEWTYPE - Trace new type"
+
+[replies.209]
+code = 209
+text = "Class {class} {count}"
+description = "RPL_TRACECLASS - Trace class"
+
+[replies.261]
+code = 261
+text = "File {logfile} {debug_level}"
+description = "RPL_TRACELOG - Trace log"
+
+[replies.262]
+code = 262
+text = "{server_name} {version} {debug_level} {current_path} {max_connections}"
+description = "RPL_TRACEEND - Trace end"
+
+# Stats replies
+[replies.211]
+code = 211
+text = "Link {hostname} {port} {port} {class} {sendq} {sent_msgs} {sent_bytes} {recv_msgs} {recv_bytes} {time_open}"
+description = "RPL_STATSLINKINFO - Stats link info"
+
+[replies.212]
+code = 212
+text = "Commands {char} {count} {byte_count} {remote_count}"
+description = "RPL_STATSCOMMANDS - Stats commands"
+
+[replies.213]
+code = 213
+text = "C {host} * {name} {port} {class}"
+description = "RPL_STATSCLINE - Stats C line"
+
+[replies.214]
+code = 214
+text = "N {host} * {name} {port} {class}"
+description = "RPL_STATSNLINE - Stats N line"
+
+[replies.215]
+code = 215
+text = "I {host} * {host} {port} {class}"
+description = "RPL_STATSILINE - Stats I line"
+
+[replies.216]
+code = 216
+text = "K {host} * {username} {port} {class}"
+description = "RPL_STATSKLINE - Stats K line"
+
+[replies.218]
+code = 218
+text = "Y {class} {ping_freq} {connect_freq} {max_sendq}"
+description = "RPL_STATSYLINE - Stats Y line"
+
+[replies.219]
+code = 219
+text = "{char} :End of STATS report"
+description = "RPL_ENDOFSTATS - End of stats"
+
+[replies.241]
+code = 241
+text = "L {hostmask} * {servername} {port} {class}"
+description = "RPL_STATSLLINE - Stats L line"
+
+[replies.242]
+code = 242
+text = ":Server Up {days} days, {hours:02}:{minutes:02}:{seconds:02}"
+description = "RPL_STATSUPTIME - Server uptime"
+
+[replies.243]
+code = 243
+text = "O {hostmask} * {name}"
+description = "RPL_STATSOLINE - Stats O line"
+
+[replies.244]
+code = 244
+text = "H {hostmask} * {servername}"
+description = "RPL_STATSHLINE - Stats H line"
+
+[replies.251]
+code = 251
+text = ":There are {users} users and {invisible} invisible on {servers} servers"
+description = "RPL_LUSERCLIENT - LUSER client"
+
+[replies.252]
+code = 252
+text = "{ops} :operator(s) online"
+description = "RPL_LUSEROP - LUSER op"
+
+[replies.253]
+code = 253
+text = "{unknown} :unknown connection(s)"
+description = "RPL_LUSERUNKNOWN - LUSER unknown"
+
+[replies.254]
+code = 254
+text = "{channels} :channels formed"
+description = "RPL_LUSERCHANNELS - LUSER channels"
+
+[replies.255]
+code = 255
+text = ":I have {clients} clients and {servers} servers"
+description = "RPL_LUSERME - LUSER me"
+
+[replies.265]
+code = 265
+text = ":Current local users: {current} Max: {max}"
+description = "RPL_LOCALUSERS - Local users"
+
+[replies.266]
+code = 266
+text = ":Current global users: {current} Max: {max}"
+description = "RPL_GLOBALUSERS - Global users"
+
+# Time and info
+[replies.391]
+code = 391
+text = "{server} :{time}"
+description = "RPL_TIME - Server time"
+
+[replies.371]
+code = 371
+text = ":{info}"
+description = "RPL_INFO - Server info"
+
+[replies.374]
+code = 374
+text = ":End of INFO list"
+description = "RPL_ENDOFINFO - End of info"
+
+# Links
+[replies.364]
+code = 364
+text = "{mask} {server} :{hopcount} {server_info}"
+description = "RPL_LINKS - Server links"
+
+[replies.365]
+code = 365
+text = "{mask} :End of LINKS list"
+description = "RPL_ENDOFLINKS - End of links"
+
+# Away
+[replies.301]
+code = 301
+text = "{nick} :{away_message}"
+description = "RPL_AWAY - User is away"
+
+[replies.305]
+code = 305
+text = ":You are no longer marked as being away"
+description = "RPL_UNAWAY - No longer away"
+
+[replies.306]
+code = 306
+text = ":You have been marked as being away"
+description = "RPL_NOWAWAY - Now away"
+
+# Userhost and Ison
+[replies.302]
+code = 302
+text = ":{reply}"
+description = "RPL_USERHOST - User host"
+
+[replies.303]
+code = 303
+text = ":{nick_list}"
+description = "RPL_ISON - Is on"
+
+# MOTD
+[replies.375]
+code = 375
+text = ":- {server_name} Message of the day - "
+description = "RPL_MOTDSTART - MOTD start"
+
+[replies.372]
+code = 372
+text = ":- {line}"
+description = "RPL_MOTD - MOTD line"
+
+[replies.376]
+code = 376
+text = ":End of MOTD command"
+description = "RPL_ENDOFMOTD - End of MOTD"
+
+# Rehash
+[replies.382]
+code = 382
+text = "{file} :Rehashing"
+description = "RPL_REHASHING - Rehashing"
+
+# Additional custom replies
+[replies.320]
+code = 320
+text = "{nick} :{info}"
+description = "RPL_WHOISSPECIAL - Special WHOIS info"
+
+[replies.317]
+code = 317
+text = "{nick} {seconds} {signon}"
+description = "RPL_WHOISIDLE - WHOIS idle time"
+
+[replies.324]
+code = 324
+text = "{channel} {mode} {mode_params}"
+description = "RPL_CHANNELMODEIS - Channel mode is"
+
+[replies.346]
+code = 346
+text = "{channel} {invite_mask}"
+description = "RPL_INVITELIST - Invite list"
+
+[replies.347]
+code = 347
+text = "{channel} :End of channel invite list"
+description = "RPL_ENDOFINVITELIST - End of invite list"
+
+[replies.348]
+code = 348
+text = "{channel} {exception_mask}"
+description = "RPL_EXCEPTLIST - Exception list"
+
+[replies.349]
+code = 349
+text = "{channel} :End of channel exception list"
+description = "RPL_ENDOFEXCEPTLIST - End of exception list"
+
+[replies.352]
+code = 352
+text = "{channel} {user} {host} {server} {nick} {flags} :{hopcount} {realname}"
+description = "RPL_WHOREPLY - WHO reply"
+
+[replies.367]
+code = 367
+text = "{channel} {ban_mask}"
+description = "RPL_BANLIST - Ban list"
+
+[replies.368]
+code = 368
+text = "{channel} :End of channel ban list"
+description = "RPL_ENDOFBANLIST - End of ban list"
+
+[replies.369]
+code = 369
+text = "{nick} :End of WHOWAS"
+description = "RPL_ENDOFWHOWAS - End of WHOWAS"
+
+[replies.221]
+code = 221
+text = "{user_modes}"
+description = "RPL_UMODEIS - User mode is"
+
+[replies.234]
+code = 234
+text = "{name} {server} {mask} {type} {hopcount} {info}"
+description = "RPL_SERVLIST - Service list"
+
+[replies.235]
+code = 235
+text = "{mask} {type} :End of service listing"
+description = "RPL_SERVLISTEND - End of service list"
+
+[replies.392]
+code = 392
+text = ":UserID Terminal Host"
+description = "RPL_USERSSTART - Users start"
+
+[replies.393]
+code = 393
+text = ":%-8s %-9s %-8s"
+description = "RPL_USERS - Users"
+
+[replies.394]
+code = 394
+text = ":End of users"
+description = "RPL_ENDOFUSERS - End of users"
+
+[replies.395]
+code = 395
+text = ":Nobody logged in"
+description = "RPL_NOUSERS - No users"

@@ -3,7 +3,7 @@
 use rustircd_core::{
     Module, module::ModuleResult, Client, Message, User, Error, Result, 
     MessageType, Prefix, BroadcastSystem, BroadcastTarget, BroadcastPriority, 
-    BroadcastMessage, Database
+    BroadcastMessage, Database, extensions::{BurstExtension, BurstType}
 };
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
@@ -1872,6 +1872,247 @@ impl ChannelModule {
         
         let mut broadcast_system = self.broadcast_system.write().await;
         broadcast_system.queue_message(broadcast)?;
+        
+        Ok(())
+    }
+}
+
+/// Channel burst extension for server-to-server synchronization
+pub struct ChannelBurstExtension {
+    channels: Arc<RwLock<HashMap<String, Channel>>>,
+    database: Arc<Database>,
+    server_name: String,
+}
+
+impl ChannelBurstExtension {
+    pub fn new(channels: Arc<RwLock<HashMap<String, Channel>>>, database: Arc<Database>, server_name: String) -> Self {
+        Self {
+            channels,
+            database,
+            server_name,
+        }
+    }
+}
+
+#[async_trait]
+impl BurstExtension for ChannelBurstExtension {
+    async fn on_prepare_burst(&self, _target_server: &str, burst_type: &BurstType) -> Result<Vec<Message>> {
+        if !matches!(burst_type, BurstType::Channel) {
+            return Ok(Vec::new());
+        }
+        
+        let mut messages = Vec::new();
+        let channels = self.channels.read().await;
+        
+        // Send all channels with their complete state
+        for channel in channels.values() {
+            // Create channel burst message
+            let mut params = vec![
+                channel.name.clone(),
+                channel.id.to_string(),
+                self.server_name.clone(),
+                channel.created_at.to_rfc3339(),
+            ];
+            
+            // Add topic information
+            if let Some(topic) = &channel.topic {
+                params.push("TOPIC".to_string());
+                params.push(topic.clone());
+                if let Some(setter) = &channel.topic_setter {
+                    params.push(setter.clone());
+                } else {
+                    params.push("unknown".to_string());
+                }
+                if let Some(time) = channel.topic_time {
+                    params.push(time.to_rfc3339());
+                } else {
+                    params.push(Utc::now().to_rfc3339());
+                }
+            } else {
+                params.push("NOTOPIC".to_string());
+            }
+            
+            // Add modes
+            let modes_str = if channel.modes.is_empty() {
+                "".to_string()
+            } else {
+                format!("+{}", channel.modes.iter().collect::<String>())
+            };
+            params.push(modes_str);
+            
+            // Add channel key if present
+            if let Some(key) = &channel.key {
+                params.push("KEY".to_string());
+                params.push(key.clone());
+            }
+            
+            // Add user limit if present
+            if let Some(limit) = channel.user_limit {
+                params.push("LIMIT".to_string());
+                params.push(limit.to_string());
+            }
+            
+            // Add ban masks
+            if !channel.ban_masks.is_empty() {
+                params.push("BANMASKS".to_string());
+                params.push(channel.ban_masks.iter().cloned().collect::<Vec<_>>().join(","));
+            }
+            
+            // Add exception masks
+            if !channel.exception_masks.is_empty() {
+                params.push("EXCEPTMASKS".to_string());
+                params.push(channel.exception_masks.iter().cloned().collect::<Vec<_>>().join(","));
+            }
+            
+            // Add invite masks
+            if !channel.invite_masks.is_empty() {
+                params.push("INVITEMASKS".to_string());
+                params.push(channel.invite_masks.iter().cloned().collect::<Vec<_>>().join(","));
+            }
+            
+            // Add member count
+            params.push("MEMBERS".to_string());
+            params.push(channel.members.len().to_string());
+            
+            let channel_burst = Message::new(MessageType::ChannelBurst, params);
+            messages.push(channel_burst);
+        }
+        
+        Ok(messages)
+    }
+    
+    async fn on_receive_burst(&self, source_server: &str, burst_type: &BurstType, messages: &[Message]) -> Result<()> {
+        if !matches!(burst_type, BurstType::Channel) {
+            return Ok(());
+        }
+        
+        let mut channels = self.channels.write().await;
+        
+        for message in messages {
+            if message.params.len() < 4 {
+                continue; // Skip malformed messages
+            }
+            
+            let channel_name = &message.params[0];
+            let channel_id_str = &message.params[1];
+            let channel_server = &message.params[2];
+            let created_at_str = &message.params[3];
+            
+            // Parse channel ID
+            let channel_id = match Uuid::parse_str(channel_id_str) {
+                Ok(id) => id,
+                Err(_) => continue, // Skip malformed messages
+            };
+            
+            // Parse creation time
+            let created_at = match DateTime::parse_from_rfc3339(created_at_str) {
+                Ok(time) => time.with_timezone(&Utc),
+                Err(_) => Utc::now(), // Default to now if parsing fails
+            };
+            
+            // Create remote channel
+            let mut remote_channel = Channel {
+                id: channel_id,
+                name: channel_name.clone(),
+                topic: None,
+                topic_setter: None,
+                topic_time: None,
+                modes: HashSet::new(),
+                key: None,
+                user_limit: None,
+                members: HashMap::new(),
+                ban_masks: HashSet::new(),
+                exception_masks: HashSet::new(),
+                invite_masks: HashSet::new(),
+                created_at,
+                last_activity: Utc::now(),
+                is_local: false, // This is a remote channel
+            };
+            
+            // Parse additional parameters
+            let mut i = 4;
+            while i < message.params.len() {
+                match message.params[i].as_str() {
+                    "TOPIC" => {
+                        if i + 3 < message.params.len() {
+                            remote_channel.topic = Some(message.params[i + 1].clone());
+                            remote_channel.topic_setter = Some(message.params[i + 2].clone());
+                            if let Ok(time) = DateTime::parse_from_rfc3339(&message.params[i + 3]) {
+                                remote_channel.topic_time = Some(time.with_timezone(&Utc));
+                            }
+                            i += 4;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    "NOTOPIC" => {
+                        remote_channel.topic = None;
+                        i += 1;
+                    }
+                    "+" if i + 1 < message.params.len() => {
+                        // Parse modes
+                        for mode_char in message.params[i + 1].chars() {
+                            remote_channel.modes.insert(mode_char);
+                        }
+                        i += 2;
+                    }
+                    "KEY" if i + 1 < message.params.len() => {
+                        remote_channel.key = Some(message.params[i + 1].clone());
+                        i += 2;
+                    }
+                    "LIMIT" if i + 1 < message.params.len() => {
+                        if let Ok(limit) = message.params[i + 1].parse::<usize>() {
+                            remote_channel.user_limit = Some(limit);
+                        }
+                        i += 2;
+                    }
+                    "BANMASKS" if i + 1 < message.params.len() => {
+                        let masks = message.params[i + 1].split(',').map(|s| s.to_string()).collect();
+                        remote_channel.ban_masks = masks;
+                        i += 2;
+                    }
+                    "EXCEPTMASKS" if i + 1 < message.params.len() => {
+                        let masks = message.params[i + 1].split(',').map(|s| s.to_string()).collect();
+                        remote_channel.exception_masks = masks;
+                        i += 2;
+                    }
+                    "INVITEMASKS" if i + 1 < message.params.len() => {
+                        let masks = message.params[i + 1].split(',').map(|s| s.to_string()).collect();
+                        remote_channel.invite_masks = masks;
+                        i += 2;
+                    }
+                    "MEMBERS" if i + 1 < message.params.len() => {
+                        // Note: We don't sync member lists in channel bursts
+                        // Member synchronization is handled separately via user bursts
+                        i += 2;
+                    }
+                    _ => {
+                        i += 1; // Skip unknown parameters
+                    }
+                }
+            }
+            
+            // Add remote channel to our channel list
+            channels.insert(channel_name.clone(), remote_channel);
+            
+            // Also add to database for tracking
+            if let Some(channel_info) = self.database.get_channel(channel_name) {
+                // Update existing channel info
+                // Note: We don't update the database channel info with remote data
+                // as it might conflict with local state
+            } else {
+                // Add new channel info to database
+                let channel_info = crate::ChannelInfo {
+                    name: channel_name.clone(),
+                    topic: remote_channel.topic.clone(),
+                    member_count: 0, // Will be updated when members join
+                    created_at: remote_channel.created_at,
+                };
+                if let Err(e) = self.database.add_channel(channel_info) {
+                    tracing::warn!("Failed to add remote channel {} to database: {}", channel_name, e);
+                }
+            }
+        }
         
         Ok(())
     }

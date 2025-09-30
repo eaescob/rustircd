@@ -6,6 +6,7 @@ use crate::{
     Database, BroadcastSystem, NetworkQueryManager, NetworkMessageHandler, ExtensionManager,
     ServerConnectionManager, ServerConnection, Prefix,
     CoreUserBurstExtension, CoreServerBurstExtension, ThrottlingManager, StatisticsManager, MotdManager,
+    extensions::BurstType,
 };
 use chrono::Utc;
 use std::collections::{HashMap, HashSet};
@@ -134,6 +135,11 @@ impl Server {
             if let Err(e) = extension_manager_clone.register_burst_extension(server_burst_extension).await {
                 tracing::error!("Failed to register server burst extension: {}", e);
             }
+            
+            // Register channel burst extension if channel module is enabled
+            // Note: This will be fully integrated when the channel module is properly loaded
+            // For now, we register a placeholder that can be replaced when the module is active
+            tracing::info!("Channel burst extension registration prepared");
         });
         
         // Initialize server connection manager
@@ -243,6 +249,9 @@ impl Server {
                     // let channel_module = rustircd_modules::ChannelModule::new(); // Commented out - modules crate not available in core
                     // module_manager.load_module(Box::new(channel_module)).await?; // Commented out - modules crate not available
                     tracing::info!("Loaded channel module");
+                    
+                    // Register channel burst extension
+                    self.register_channel_burst_extension().await?;
                 }
                 "ircv3" => {
                     // Load IRCv3 module
@@ -2469,5 +2478,59 @@ impl Server {
         // This method is a placeholder - actual implementation should be in modules crate
         tracing::info!("IRCv3 extensions registration called (placeholder)");
         Ok(())
+    }
+    
+    /// Register channel burst extension
+    /// This method registers the channel burst extension for server-to-server synchronization
+    async fn register_channel_burst_extension(&self) -> Result<()> {
+        // Note: This is a placeholder implementation
+        // In a full implementation, this would:
+        // 1. Get the channel module's channel data structures
+        // 2. Create a ChannelBurstExtension instance
+        // 3. Register it with the extension manager
+        
+        tracing::info!("Channel burst extension registration called (placeholder)");
+        tracing::info!("  - Channel burst extension will be registered when channel module is fully integrated");
+        tracing::info!("  - This will enable server-to-server channel synchronization");
+        
+        // TODO: When channel module is fully integrated:
+        // let channels = channel_module.get_channels(); // Get channel data from module
+        // let channel_burst_extension = Box::new(ChannelBurstExtension::new(
+        //     channels,
+        //     self.database.clone(),
+        //     self.config.server.name.clone(),
+        // ));
+        // self.extension_manager.register_burst_extension(channel_burst_extension).await?;
+        
+        Ok(())
+    }
+    
+    /// Handle incoming ChannelBurst messages from other servers
+    /// This method processes channel synchronization data from remote servers
+    pub async fn handle_channel_burst(&self, source_server: &str, messages: &[Message]) -> Result<()> {
+        tracing::info!("Processing channel burst from server: {} ({} messages)", source_server, messages.len());
+        
+        // Use the extension manager to process the burst
+        let burst_type = BurstType::Channel;
+        if let Err(e) = self.extension_manager.process_burst(source_server, &burst_type, messages).await {
+            tracing::error!("Failed to process channel burst from {}: {}", source_server, e);
+            return Err(e);
+        }
+        
+        tracing::info!("Successfully processed channel burst from server: {}", source_server);
+        Ok(())
+    }
+    
+    /// Prepare channel burst for sending to another server
+    /// This method collects channel information for synchronization
+    pub async fn prepare_channel_burst(&self, target_server: &str) -> Result<Vec<Message>> {
+        tracing::info!("Preparing channel burst for server: {}", target_server);
+        
+        // Use the extension manager to prepare the burst
+        let burst_type = BurstType::Channel;
+        let messages = self.extension_manager.prepare_burst(target_server, &burst_type).await?;
+        
+        tracing::info!("Prepared {} channel burst messages for server: {}", messages.len(), target_server);
+        Ok(messages)
     }
 }

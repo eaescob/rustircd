@@ -1,0 +1,5 @@
+Welcome to Simple IRC Server!
+
+This is a basic MOTD example.
+
+Have a great day!

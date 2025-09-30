@@ -1,0 +1,30 @@
+Welcome to RustIRCd!
+====================
+
+This is a modern IRC server written in Rust with the following features:
+
+• RFC 1459 compliant IRC protocol
+• Enhanced STATS system with security controls
+• Connection throttling and rate limiting
+• Configurable replies and MOTD system
+• IRCv3 capabilities and extensions
+• Channel operations and management
+• Operator system with granular permissions
+
+For more information, visit:
+https://github.com/rustircd/rustircd
+
+Rules:
+------
+• Be respectful to other users
+• No spam or flooding
+• No illegal content
+• Follow channel rules and operator instructions
+
+Need help? Try these commands:
+• /help - Show available commands
+• /whois <nick> - Get user information
+• /list - List available channels
+• /stats - Show server statistics (operators only)
+
+Enjoy your stay on RustIRCd!

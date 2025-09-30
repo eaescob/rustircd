@@ -1,0 +1,60 @@
+Welcome to RustIRCd Network!
+============================
+
+Server Information:
+------------------
+• Server: RustIRCd v1.0.0
+• Network: RustNet
+• Location: Global
+• Uptime: 24/7
+
+Features:
+---------
+• RFC 1459 compliant IRC protocol
+• Enhanced security with connection throttling
+• Configurable replies and MOTD system
+• IRCv3 capabilities and extensions
+• Channel operations and management
+• Operator system with granular permissions
+• Real-time statistics and monitoring
+
+Available Commands:
+------------------
+User Commands:
+• /nick <nickname> - Change your nickname
+• /join <channel> - Join a channel
+• /part <channel> [reason] - Leave a channel
+• /privmsg <target> <message> - Send a message
+• /whois <nickname> - Get user information
+• /list - List available channels
+• /motd - Display this message
+
+Operator Commands (operators only):
+• /oper <nick> <password> - Operator login
+• /stats - Show server statistics
+• /kill <nick> <reason> - Disconnect user
+• /connect <server> <port> - Connect to server
+
+Network Rules:
+--------------
+1. Respect other users and their privacy
+2. No spam, flooding, or excessive messaging
+3. No illegal content or activities
+4. Follow channel rules and operator instructions
+5. Use appropriate language and behavior
+6. Report abuse to operators
+
+Getting Help:
+-------------
+• /help - Show available commands
+• /whois <nick> - Get user information
+• Contact operators for assistance
+
+Support:
+--------
+• Website: https://github.com/rustircd/rustircd
+• Documentation: Available in the repository
+• Issues: Report bugs and feature requests on GitHub
+
+Thank you for choosing RustIRCd!
+Have a great time chatting!

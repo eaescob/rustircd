@@ -130,6 +130,43 @@ pub trait MessageTagExtension: Send + Sync {
     async fn validate_tags(&self, tags: &HashMap<String, String>) -> Result<()>;
 }
 
+/// Extension point for server burst synchronization
+#[async_trait]
+pub trait BurstExtension: Send + Sync {
+    /// Called when preparing to send a burst to a server
+    async fn on_prepare_burst(&self, target_server: &str, burst_type: &BurstType) -> Result<Vec<Message>>;
+    
+    /// Called when receiving a burst from a server
+    async fn on_receive_burst(&self, source_server: &str, burst_type: &BurstType, messages: &[Message]) -> Result<()>;
+    
+    /// Called when a server connects and needs initial synchronization
+    async fn on_server_connect_burst(&self, target_server: &str) -> Result<Vec<Message>>;
+    
+    /// Called when a server disconnects and cleanup is needed
+    async fn on_server_disconnect_cleanup(&self, source_server: &str) -> Result<()>;
+    
+    /// Get the burst types this extension handles
+    fn get_supported_burst_types(&self) -> Vec<BurstType>;
+    
+    /// Check if this extension handles a specific burst type
+    fn handles_burst_type(&self, burst_type: &BurstType) -> bool;
+}
+
+/// Types of server burst synchronization
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BurstType {
+    /// User information burst
+    User,
+    /// Channel information burst
+    Channel,
+    /// Server information burst
+    Server,
+    /// Module-specific burst
+    Module(String),
+    /// Custom burst type
+    Custom(String),
+}
+
 /// Core extension manager
 // #[derive(Debug)] // Commented out - trait objects don't implement Debug
 pub struct ExtensionManager {
@@ -145,6 +182,8 @@ pub struct ExtensionManager {
     capability_extensions: Arc<RwLock<Vec<Box<dyn CapabilityExtension>>>>,
     /// Message tag extensions
     message_tag_extensions: Arc<RwLock<Vec<Box<dyn MessageTagExtension>>>>,
+    /// Burst extensions
+    burst_extensions: Arc<RwLock<Vec<Box<dyn BurstExtension>>>>,
 }
 
 impl ExtensionManager {
@@ -157,6 +196,7 @@ impl ExtensionManager {
             server_extensions: Arc::new(RwLock::new(Vec::new())),
             capability_extensions: Arc::new(RwLock::new(Vec::new())),
             message_tag_extensions: Arc::new(RwLock::new(Vec::new())),
+            burst_extensions: Arc::new(RwLock::new(Vec::new())),
         }
     }
     
@@ -423,6 +463,83 @@ impl ExtensionManager {
             if let Err(e) = extension.validate_tags(tags).await {
                 tracing::warn!("Message tag extension error on validation: {}", e);
                 return Err(e);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    // Burst extension management
+    
+    /// Register a burst extension
+    pub async fn register_burst_extension(&self, extension: Box<dyn BurstExtension>) -> Result<()> {
+        let mut extensions = self.burst_extensions.write().await;
+        extensions.push(extension);
+        Ok(())
+    }
+    
+    /// Get all burst extensions
+    pub async fn get_burst_extensions(&self) -> Vec<Box<dyn BurstExtension>> {
+        let _extensions = self.burst_extensions.read().await;
+        // We can't clone trait objects, so we need to return references or handle this differently
+        // For now, return an empty vec - this method needs to be redesigned
+        Vec::new()
+    }
+    
+    /// Prepare burst messages for a specific burst type
+    pub async fn prepare_burst(&self, target_server: &str, burst_type: &BurstType) -> Result<Vec<Message>> {
+        let extensions = self.burst_extensions.read().await;
+        let mut all_messages = Vec::new();
+        
+        for extension in extensions.iter() {
+            if extension.handles_burst_type(burst_type) {
+                match extension.on_prepare_burst(target_server, burst_type).await {
+                    Ok(messages) => all_messages.extend(messages),
+                    Err(e) => tracing::warn!("Burst extension error on prepare: {}", e),
+                }
+            }
+        }
+        
+        Ok(all_messages)
+    }
+    
+    /// Process received burst messages
+    pub async fn process_burst(&self, source_server: &str, burst_type: &BurstType, messages: &[Message]) -> Result<()> {
+        let extensions = self.burst_extensions.read().await;
+        
+        for extension in extensions.iter() {
+            if extension.handles_burst_type(burst_type) {
+                if let Err(e) = extension.on_receive_burst(source_server, burst_type, messages).await {
+                    tracing::warn!("Burst extension error on receive: {}", e);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Handle server connect burst
+    pub async fn handle_server_connect_burst(&self, target_server: &str) -> Result<Vec<Message>> {
+        let extensions = self.burst_extensions.read().await;
+        let mut all_messages = Vec::new();
+        
+        for extension in extensions.iter() {
+            match extension.on_server_connect_burst(target_server).await {
+                Ok(messages) => all_messages.extend(messages),
+                Err(e) => tracing::warn!("Burst extension error on server connect: {}", e),
+            }
+        }
+        
+        Ok(all_messages)
+    }
+    
+    /// Handle server disconnect cleanup
+    pub async fn handle_server_disconnect_cleanup(&self, source_server: &str) -> Result<()> {
+        let extensions = self.burst_extensions.read().await;
+        
+        for extension in extensions.iter() {
+            if let Err(e) = extension.on_server_disconnect_cleanup(source_server).await {
+                tracing::warn!("Burst extension error on server disconnect: {}", e);
             }
         }
         

@@ -49,6 +49,14 @@ pub trait Module: Send + Sync {
     
     /// Handle a numeric reply (for modules that need to process them)
     async fn handle_numeric_reply(&mut self, numeric: u16, params: Vec<String>) -> Result<()>;
+    
+    /// Handle a STATS query for this module
+    /// Returns a vector of STATS responses for the given query letter
+    /// The server reference can be used to check operator privileges
+    async fn handle_stats_query(&mut self, query: &str, client_id: uuid::Uuid, server: Option<&crate::Server>) -> Result<Vec<ModuleStatsResponse>>;
+    
+    /// Get the STATS query letters this module handles
+    fn get_stats_queries(&self) -> Vec<String>;
 }
 
 /// Result of module message handling
@@ -62,6 +70,15 @@ pub enum ModuleResult {
     NotHandled,
     /// Message was rejected, send error
     Rejected(String),
+}
+
+/// Module STATS response
+#[derive(Debug, Clone)]
+pub enum ModuleStatsResponse {
+    /// Standard STATS response with query letter and data
+    Stats(String, String),
+    /// Module-specific STATS response
+    ModuleStats(String, String),
 }
 
 /// Module manager for loading and managing modules
@@ -199,6 +216,28 @@ impl ModuleManager {
         Ok(())
     }
     
+    
+    /// Handle a STATS query through modules
+    pub async fn handle_stats_query(&mut self, query: &str, client_id: uuid::Uuid, server: Option<&crate::Server>) -> Result<Vec<ModuleStatsResponse>> {
+        let mut responses = Vec::new();
+        
+        for module_name in &self.message_handlers {
+            if let Some(module) = self.modules.get_mut(module_name) {
+                if module.get_stats_queries().contains(&query.to_string()) {
+                    match module.handle_stats_query(query, client_id, server).await {
+                        Ok(module_responses) => {
+                            responses.extend(module_responses);
+                        }
+                        Err(e) => {
+                            tracing::error!("Error in module {} stats query: {}", module_name, e);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(responses)
+    }
     
     /// Get all loaded modules
     pub fn get_loaded_modules(&self) -> Vec<&str> {

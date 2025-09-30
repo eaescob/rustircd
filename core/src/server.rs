@@ -2,9 +2,10 @@
 
 use crate::{
     User, Message, MessageType, NumericReply, Config, ModuleManager,
-    connection::ConnectionHandler, Error, Result, module::ModuleResult, client::{Client, ClientState},
+    connection::ConnectionHandler, Error, Result, module::{ModuleResult, ModuleStatsResponse}, client::{Client, ClientState},
     Database, BroadcastSystem, NetworkQueryManager, NetworkMessageHandler, ExtensionManager,
     ServerConnectionManager, ServerConnection, Prefix,
+    CoreUserBurstExtension, CoreServerBurstExtension, ThrottlingManager, StatisticsManager, MotdManager,
 };
 use chrono::Utc;
 use std::collections::{HashMap, HashSet};
@@ -43,6 +44,12 @@ pub struct Server {
     extension_manager: Arc<ExtensionManager>,
     /// Server connection manager
     server_connections: Arc<ServerConnectionManager>,
+    /// Throttling manager for connection rate limiting
+    throttling_manager: Arc<ThrottlingManager>,
+    /// Statistics manager for tracking server statistics
+    statistics_manager: Arc<StatisticsManager>,
+    /// MOTD manager for Message of the Day
+    motd_manager: Arc<MotdManager>,
     /// TLS acceptor (if enabled)
     tls_acceptor: Option<TlsAcceptor>,
     /// Replies configuration
@@ -107,8 +114,45 @@ impl Server {
         // Initialize extension manager
         let extension_manager = Arc::new(ExtensionManager::new());
         
+        // Register core burst extensions
+        let user_burst_extension = Box::new(CoreUserBurstExtension::new(
+            database.clone(),
+            config.server.name.clone(),
+        ));
+        let server_burst_extension = Box::new(CoreServerBurstExtension::new(
+            config.server.name.clone(),
+            config.server.description.clone(),
+            config.server.version.clone(),
+        ));
+        
+        // Register extensions (we need to clone the Arc to access it)
+        let extension_manager_clone = extension_manager.clone();
+        tokio::spawn(async move {
+            if let Err(e) = extension_manager_clone.register_burst_extension(user_burst_extension).await {
+                tracing::error!("Failed to register user burst extension: {}", e);
+            }
+            if let Err(e) = extension_manager_clone.register_burst_extension(server_burst_extension).await {
+                tracing::error!("Failed to register server burst extension: {}", e);
+            }
+        });
+        
         // Initialize server connection manager
         let server_connections = Arc::new(ServerConnectionManager::new(Arc::new(config.clone())));
+        
+        // Initialize throttling manager
+        let throttling_manager = Arc::new(ThrottlingManager::new(config.modules.throttling.clone()));
+        
+        // Initialize statistics manager
+        let statistics_manager = Arc::new(StatisticsManager::new());
+        
+        // Initialize MOTD manager
+        let mut motd_manager = MotdManager::new();
+        if let Some(motd_file) = &config.server.motd_file {
+            if let Err(e) = motd_manager.load_motd(motd_file).await {
+                tracing::warn!("Failed to load MOTD file {}: {}", motd_file, e);
+            }
+        }
+        let motd_manager = Arc::new(motd_manager);
         
         Self {
             config: config.clone(),
@@ -123,6 +167,9 @@ impl Server {
             network_message_handler,
             extension_manager,
             server_connections,
+            throttling_manager,
+            statistics_manager,
+            motd_manager,
             tls_acceptor: None,
             replies_config: config.replies.clone(),
         }
@@ -143,6 +190,9 @@ impl Server {
         
         // Load modules
         self.load_modules().await?;
+        
+        // Initialize throttling manager
+        self.throttling_manager.init().await?;
         
         tracing::info!("Server initialized successfully");
         Ok(())
@@ -206,6 +256,12 @@ impl Server {
                     // module_manager.load_module(Box::new(optional_module)).await?; // Commented out - modules crate not available
                     tracing::info!("Loaded optional commands module");
                 }
+                "throttling" => {
+                    // Load throttling module
+                    // let throttling_module = rustircd_modules::ThrottlingModule::new(self.config.modules.throttling.clone()); // Commented out - modules crate not available
+                    // module_manager.load_module(Box::new(throttling_module)).await?; // Commented out - modules crate not available
+                    tracing::info!("Loaded throttling module");
+                }
                 _ => {
                     tracing::warn!("Unknown module: {}", module_name);
                 }
@@ -249,6 +305,7 @@ impl Server {
                       port, description, tls_enabled, connection_type);
         
         // Spawn connection handler for this port
+        let throttling_manager = self.throttling_manager.clone();
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
@@ -256,6 +313,30 @@ impl Server {
                         // Determine connection type based on port configuration
                         let is_client_connection = matches!(connection_type, crate::config::PortConnectionType::Client | crate::config::PortConnectionType::Both);
                         let is_server_connection = matches!(connection_type, crate::config::PortConnectionType::Server | crate::config::PortConnectionType::Both);
+                        
+                        // Check throttling for client connections
+                        if is_client_connection && !is_server_connection {
+                            match throttling_manager.check_connection_allowed(addr.ip()).await {
+                                Ok(allowed) => {
+                                    if !allowed {
+                                        tracing::debug!("Connection from {} blocked by throttling", addr);
+                                        let _ = stream.shutdown().await;
+                                        continue;
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Error checking throttling for {}: {}", addr, e);
+                                    let _ = stream.shutdown().await;
+                                    continue;
+                                }
+                            }
+                            
+                            // Record connection statistics
+                            self.statistics_manager.record_connection().await;
+                        } else if is_server_connection && !is_client_connection {
+                            // Record server connection statistics
+                            self.statistics_manager.record_server_connection().await;
+                        }
                         
                         let mut conn_handler = connection_handler.write().await;
                         if let Err(e) = conn_handler.handle_connection_with_type(stream, addr, tls_acceptor.clone(), is_client_connection, is_server_connection).await {
@@ -292,6 +373,13 @@ impl Server {
     
     /// Handle a message from a client
     pub async fn handle_message(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        // Record message statistics
+        let command_name = match &message.command {
+            MessageType::Custom(cmd) => cmd.as_str(),
+            _ => "UNKNOWN",
+        };
+        self.statistics_manager.record_message_received(command_name, message.to_string().len()).await;
+        
         let connection_handler = self.connection_handler.read().await;
         let client = connection_handler.get_client(&client_id)
             .ok_or_else(|| Error::User("Client not found".to_string()))?;
@@ -360,6 +448,27 @@ impl Server {
             MessageType::ServerQuit => {
                 self.handle_server_quit(server_name, message).await?;
             }
+            MessageType::Ping => {
+                self.handle_server_ping(server_name, message).await?;
+            }
+            MessageType::Pong => {
+                self.handle_server_pong(server_name, message).await?;
+            }
+            MessageType::Nick => {
+                self.handle_server_nick_propagation(server_name, message).await?;
+            }
+            MessageType::Quit => {
+                self.handle_server_quit_propagation(server_name, message).await?;
+            }
+            MessageType::UserBurst => {
+                self.handle_user_burst(server_name, message).await?;
+            }
+            MessageType::ServerBurst => {
+                self.handle_server_burst_received(server_name, message).await?;
+            }
+            MessageType::ChannelBurst => {
+                self.handle_channel_burst_received(server_name, message).await?;
+            }
             _ => {
                 // Other server commands can be handled here
                 tracing::debug!("Unhandled server command: {:?}", message.command);
@@ -369,9 +478,27 @@ impl Server {
     }
     
     /// Handle server registration
-    async fn handle_server_registration(&self, server_name: &str, _message: Message, is_super_server: bool) -> Result<()> {
+    async fn handle_server_registration(&self, server_name: &str, message: Message, is_super_server: bool) -> Result<()> {
         tracing::info!("Server {} registered (super: {})", server_name, is_super_server);
-        // TODO: Implement server registration logic
+        
+        // Validate SERVER command parameters
+        if message.params.len() < 3 {
+            return Err(Error::MessageParse("SERVER command requires at least 3 parameters".to_string()));
+        }
+        
+        let _server_name_param = &message.params[0];
+        let hop_count: u8 = message.params[1].parse()
+            .map_err(|_| Error::MessageParse("Invalid hop count in SERVER command".to_string()))?;
+        let _server_description = &message.params[2];
+        
+        // Update server connection state
+        self.server_connections.update_connection_state(server_name, crate::server_connection::ServerConnectionState::Registered).await?;
+        
+        // Send server burst to propagate our users and channels
+        self.send_server_burst(server_name).await?;
+        
+        tracing::info!("Server {} fully registered with hop count {}", server_name, hop_count);
+        
         Ok(())
     }
     
@@ -379,6 +506,290 @@ impl Server {
     async fn handle_server_quit(&self, server_name: &str, _message: Message) -> Result<()> {
         tracing::info!("Server {} quit", server_name);
         // TODO: Implement server quit logic
+        Ok(())
+    }
+    
+    /// Send server burst to propagate our state to a newly connected server
+    async fn send_server_burst(&self, target_server: &str) -> Result<()> {
+        tracing::info!("Sending server burst to {}", target_server);
+        
+        // Use extension system to prepare burst messages
+        let extension_manager = &*self.extension_manager;
+        
+        // Stage 1: Send user burst
+        self.send_user_burst(target_server, &extension_manager).await?;
+        
+        // Stage 2: Send channel burst  
+        self.send_channel_burst(target_server, &extension_manager).await?;
+        
+        // Stage 3: Send other server information
+        self.send_other_burst(target_server, &extension_manager).await?;
+        
+        // Stage 4: Send module-specific bursts
+        self.send_module_bursts(target_server, &extension_manager).await?;
+        
+        tracing::info!("Server burst to {} completed", target_server);
+        Ok(())
+    }
+    
+    /// Send user burst - propagate all local users
+    async fn send_user_burst(&self, target_server: &str, extension_manager: &crate::extensions::ExtensionManager) -> Result<()> {
+        tracing::debug!("Sending user burst to {}", target_server);
+        
+        // Get user burst messages from extensions
+        let burst_type = crate::extensions::BurstType::User;
+        let messages = extension_manager.prepare_burst(target_server, &burst_type).await?;
+        
+        // Send all user burst messages
+        for message in messages {
+            self.server_connections.send_to_server(target_server, message).await?;
+        }
+        
+        tracing::debug!("Sent user burst to {}", target_server);
+        Ok(())
+    }
+    
+    /// Send channel burst - propagate all local channels
+    async fn send_channel_burst(&self, target_server: &str, extension_manager: &crate::extensions::ExtensionManager) -> Result<()> {
+        tracing::debug!("Sending channel burst to {}", target_server);
+        
+        // Get channel burst messages from extensions
+        let burst_type = crate::extensions::BurstType::Channel;
+        let messages = extension_manager.prepare_burst(target_server, &burst_type).await?;
+        
+        // Send all channel burst messages
+        for message in messages {
+            self.server_connections.send_to_server(target_server, message).await?;
+        }
+        
+        tracing::debug!("Sent channel burst to {}", target_server);
+        Ok(())
+    }
+    
+    /// Send other burst - propagate server information and other state
+    async fn send_other_burst(&self, target_server: &str, extension_manager: &crate::extensions::ExtensionManager) -> Result<()> {
+        tracing::debug!("Sending other burst to {}", target_server);
+        
+        // Get server burst messages from extensions
+        let burst_type = crate::extensions::BurstType::Server;
+        let mut messages = extension_manager.prepare_burst(target_server, &burst_type).await?;
+        
+        // Add core server information if no extensions provided it
+        if messages.is_empty() {
+            let server_burst = Message::new(
+                MessageType::ServerBurst,
+                vec![
+                    self.config.server.name.clone(),
+                    self.config.server.description.clone(),
+                    "1".to_string(), // hop count
+                    self.config.server.version.clone(),
+                ]
+            );
+            messages.push(server_burst);
+        }
+        
+        // Send all server burst messages
+        for message in messages {
+            self.server_connections.send_to_server(target_server, message).await?;
+        }
+        
+        tracing::debug!("Sent other burst to {}", target_server);
+        Ok(())
+    }
+    
+    /// Send module-specific bursts
+    async fn send_module_bursts(&self, target_server: &str, extension_manager: &crate::extensions::ExtensionManager) -> Result<()> {
+        tracing::debug!("Sending module bursts to {}", target_server);
+        
+        // For now, we'll use the prepare_burst method for module-specific burst types
+        // This is a simplified approach - in a full implementation, we'd need to iterate through extensions
+        
+        // Send any module-specific bursts
+        let module_burst_type = crate::extensions::BurstType::Module("core".to_string());
+        let messages = extension_manager.prepare_burst(target_server, &module_burst_type).await?;
+        for message in messages {
+            self.server_connections.send_to_server(target_server, message).await?;
+        }
+        
+        tracing::debug!("Sent module bursts to {}", target_server);
+        Ok(())
+    }
+    
+    /// Handle server PING
+    async fn handle_server_ping(&self, server_name: &str, message: Message) -> Result<()> {
+        if message.params.is_empty() {
+            return Err(Error::MessageParse("PING requires a token parameter".to_string()));
+        }
+        
+        let token = &message.params[0];
+        let pong_message = Message::new(
+            MessageType::Pong,
+            vec![token.clone()]
+        );
+        
+        self.server_connections.send_to_server(server_name, pong_message).await?;
+        tracing::debug!("Sent PONG to server {}", server_name);
+        Ok(())
+    }
+    
+    /// Handle server PONG
+    async fn handle_server_pong(&self, server_name: &str, message: Message) -> Result<()> {
+        if message.params.is_empty() {
+            return Err(Error::MessageParse("PONG requires a token parameter".to_string()));
+        }
+        
+        let token = &message.params[0];
+        tracing::debug!("Received PONG from server {} with token {}", server_name, token);
+        
+        // Update last pong time for the server
+        self.server_connections.update_connection_pong(server_name).await?;
+        
+        Ok(())
+    }
+    
+    /// Handle SQUIT command (server quit)
+    async fn handle_squit(&self, _server_name: &str, message: Message) -> Result<()> {
+        if message.params.is_empty() {
+            return Err(Error::MessageParse("SQUIT requires a server name parameter".to_string()));
+        }
+        
+        let target_server = &message.params[0];
+        let reason = message.params.get(1).map(|s| s.as_str()).unwrap_or("Server quit");
+        
+        tracing::info!("SQUIT command received for server {}: {}", target_server, reason);
+        
+        // Remove the server connection
+        if let Some(_connection) = self.server_connections.remove_connection(target_server).await? {
+            tracing::info!("Removed server connection: {}", target_server);
+            
+            // Propagate SQUIT to other servers
+            let squit_propagation = Message::new(
+                MessageType::ServerQuit,
+                vec![target_server.to_string(), reason.to_string()]
+            );
+            self.propagate_to_servers(squit_propagation).await?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Handle NICK propagation from other servers
+    async fn handle_server_nick_propagation(&self, server_name: &str, message: Message) -> Result<()> {
+        if message.params.is_empty() {
+            return Err(Error::MessageParse("NICK propagation requires nickname parameter".to_string()));
+        }
+        
+        let nick = &message.params[0];
+        tracing::debug!("Received NICK propagation from server {}: {}", server_name, nick);
+        
+        // TODO: Update user nickname in database and propagate to local clients
+        // This would involve updating the user's nickname and notifying local clients
+        
+        Ok(())
+    }
+    
+    /// Handle QUIT propagation from other servers
+    async fn handle_server_quit_propagation(&self, server_name: &str, message: Message) -> Result<()> {
+        let reason = message.params.first().map(|s| s.as_str()).unwrap_or("Quit");
+        tracing::debug!("Received QUIT propagation from server {}: {}", server_name, reason);
+        
+        // TODO: Remove user from database and notify local clients
+        // This would involve finding the user by server and removing them
+        
+        Ok(())
+    }
+    
+    /// Handle user burst from other servers
+    async fn handle_user_burst(&self, server_name: &str, message: Message) -> Result<()> {
+        if message.params.len() < 7 {
+            return Err(Error::MessageParse("User burst requires 7 parameters".to_string()));
+        }
+        
+        let nick = &message.params[0];
+        let user = &message.params[1];
+        let host = &message.params[2];
+        let _realname = &message.params[3];
+        let _user_server = &message.params[4];
+        let _user_id = &message.params[5];
+        let _connected_at = &message.params[6];
+        
+        tracing::debug!("Received user burst from server {}: {}!{}@{}", server_name, nick, user, host);
+        
+        // Process through extension system
+        let extension_manager = &*self.extension_manager;
+        let burst_type = crate::extensions::BurstType::User;
+        extension_manager.process_burst(server_name, &burst_type, &[message]).await?;
+        
+        Ok(())
+    }
+    
+    /// Handle server burst from other servers
+    async fn handle_server_burst_received(&self, server_name: &str, message: Message) -> Result<()> {
+        if message.params.len() < 4 {
+            return Err(Error::MessageParse("Server burst requires 4 parameters".to_string()));
+        }
+        
+        let server_name_burst = &message.params[0];
+        let _description = &message.params[1];
+        let hop_count = &message.params[2];
+        let _version = &message.params[3];
+        
+        tracing::debug!("Received server burst from server {}: {} (hop: {})", server_name, server_name_burst, hop_count);
+        
+        // Process through extension system
+        let extension_manager = &*self.extension_manager;
+        let burst_type = crate::extensions::BurstType::Server;
+        extension_manager.process_burst(server_name, &burst_type, &[message]).await?;
+        
+        Ok(())
+    }
+    
+    /// Handle channel burst from other servers
+    async fn handle_channel_burst_received(&self, server_name: &str, message: Message) -> Result<()> {
+        tracing::debug!("Received channel burst from server {}: {:?}", server_name, message.params);
+        
+        // Process through extension system
+        let extension_manager = &*self.extension_manager;
+        let burst_type = crate::extensions::BurstType::Channel;
+        extension_manager.process_burst(server_name, &burst_type, &[message]).await?;
+        
+        Ok(())
+    }
+    
+    /// Handle PASS command for server connections
+    async fn handle_server_password(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let _password = &message.params[0];
+        
+        // Find the server connection by client_id
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(_client) = connection_handler.get_client(&client_id) {
+            // For now, we'll validate against configured server links
+            // In a full implementation, we'd need to track which server this client represents
+            
+            // TODO: Implement proper server password validation
+            // This would involve finding the server name associated with this client_id
+            // and validating against the configured server links
+            
+            tracing::info!("Server password validation (to be implemented)");
+            
+            // For now, just update the connection state
+            // In a real implementation, we'd need to find the server name
+            Ok(())
+        } else {
+            Err(Error::Server("Client not found".to_string()))
+        }
+    }
+    
+    /// Propagate message to all connected servers
+    async fn propagate_to_servers(&self, message: Message) -> Result<()> {
+        let connections = self.server_connections.get_all_connections().await;
+        for connection in connections {
+            if connection.is_registered() {
+                if let Err(e) = connection.send(message.clone()) {
+                    tracing::warn!("Failed to propagate message to server {}: {}", connection.info.name, e);
+                }
+            }
+        }
         Ok(())
     }
     
@@ -429,6 +840,9 @@ impl Server {
             MessageType::Trace => {
                 self.handle_trace(client_id, message).await?;
             }
+            MessageType::Motd => {
+                self.handle_motd(client_id, message).await?;
+            }
             // User queries
             MessageType::Who => {
                 self.handle_who(client_id, message).await?;
@@ -463,6 +877,9 @@ impl Server {
             MessageType::Oper => {
                 self.handle_oper(client_id, message).await?;
             }
+            MessageType::ServerQuit => {
+                self.handle_operator_squit(client_id, message).await?;
+            }
             _ => {
                 // Command not handled by core
                 tracing::debug!("Unhandled command: {:?}", message.command);
@@ -483,7 +900,16 @@ impl Server {
             return Ok(());
         }
         
-        // Check if password is required and correct
+        // Check if this is a server connection
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            if client.connection_type == crate::client::ConnectionType::Server {
+                // Handle server password
+                return self.handle_server_password(client_id, message).await;
+            }
+        }
+        
+        // Check if password is required and correct for clients
         if self.config.security.require_client_password {
             if let Some(ref required_password) = self.config.security.client_password {
                 if message.params[0] != *required_password {
@@ -548,6 +974,18 @@ impl Server {
             // TODO: Set nickname in client
         }
         
+        // Propagate NICK change to other servers
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            if client.is_registered() {
+                let nick_propagation = Message::new(
+                    MessageType::Nick,
+                    vec![nick.clone()]
+                );
+                drop(connection_handler); // Release the lock before async call
+                self.propagate_to_servers(nick_propagation).await?;
+            }
+        }
+        
         Ok(())
     }
     
@@ -593,6 +1031,12 @@ impl Server {
                     hostname,
                 );
                 let _ = client.send(welcome_msg);
+                
+                // Send MOTD after welcome message
+                let motd_messages = self.motd_manager.get_all_motd_messages(&self.config.server.name).await;
+                for motd_msg in motd_messages {
+                    let _ = client.send(motd_msg);
+                }
             }
         }
         
@@ -618,7 +1062,24 @@ impl Server {
     
     /// Handle QUIT command
     async fn handle_quit(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
-        let _quit_message = message.params.first().map(|s| s.as_str()).unwrap_or("Client quit");
+        let quit_message = message.params.first().map(|s| s.as_str()).unwrap_or("Client quit");
+        
+        // Propagate QUIT to other servers before removing client
+        let connection_handler = self.connection_handler.read().await;
+        let should_propagate = if let Some(client) = connection_handler.get_client(&client_id) {
+            client.is_registered()
+        } else {
+            false
+        };
+        drop(connection_handler);
+        
+        if should_propagate {
+            let quit_propagation = Message::new(
+                MessageType::Quit,
+                vec![quit_message.to_string()]
+            );
+            self.propagate_to_servers(quit_propagation).await?;
+        }
         
         // Notify modules
         let module_manager = self.module_manager.read().await;
@@ -689,50 +1150,216 @@ impl Server {
         Ok(())
     }
     
-    /// Handle STATS command
+    /// Handle STATS command - RFC 1459 compliant with module extensions
     async fn handle_stats(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
         let connection_handler = self.connection_handler.read().await;
         if let Some(client) = connection_handler.get_client(&client_id) {
             let query = message.params.get(0).map(|s| s.as_str()).unwrap_or("");
             
+            // Get current statistics
+            let stats = self.statistics_manager.statistics().read().await;
+            
             match query {
                 "l" => {
-                    // Link information
-                    let stats_msg = NumericReply::stats_link_info(
-                        &self.config.server.name,
+                    // List of servers (links) - RFC 1459
+                    self.handle_stats_links(client, &stats).await?;
+                }
+                "m" => {
+                    // Commands usage statistics - RFC 1459
+                    self.handle_stats_commands(client, &stats).await?;
+                }
+                "o" => {
+                    // List of operators currently online - RFC 1459
+                    self.handle_stats_operators(client).await?;
+                }
+                "u" => {
+                    // Server uptime - RFC 1459
+                    let uptime_msg = NumericReply::stats_uptime(&self.config.server.name, stats.uptime_seconds());
+                    let _ = client.send(uptime_msg);
+                }
+                "y" => {
+                    // Class information - RFC 1459
+                    self.handle_stats_classes(client).await?;
+                }
+                "c" => {
+                    // Connection information - RFC 1459
+                    self.handle_stats_connections(client, &stats).await?;
+                }
+                _ => {
+                    // Check if any module handles this query
+                    let mut module_manager = self.module_manager.write().await;
+                    if let Ok(module_responses) = module_manager.handle_stats_query(query, client_id, Some(self)).await {
+                        for response in module_responses {
+                            match response {
+                                ModuleStatsResponse::Stats(letter, data) => {
+                                    let stats_msg = NumericReply::stats_commands(&letter, 0, 0, 0);
+                                    let _ = client.send(stats_msg);
+                                }
+                                ModuleStatsResponse::ModuleStats(module, data) => {
+                                    let stats_msg = NumericReply::stats_module(&module, &data);
+                                    let _ = client.send(stats_msg);
+                                }
+                            }
+                        }
+                    } else {
+                        // Unknown query - send empty response
+                        let stats_msg = NumericReply::stats_commands("UNKNOWN", 0, 0, 0);
+                        let _ = client.send(stats_msg);
+                    }
+                }
+            }
+            
+            let end_msg = NumericReply::end_of_stats(query);
+            let _ = client.send(end_msg);
+        }
+        Ok(())
+    }
+    
+    /// Handle STATS l - Server links
+    async fn handle_stats_links(&self, client: &Client, stats: &crate::ServerStatistics) -> Result<()> {
+        // Check if the requesting user is an operator
+        let users = self.users.read().await;
+        let requesting_user = users.get(&client.user_id);
+        let is_operator = requesting_user.map(|u| u.is_operator).unwrap_or(false);
+        
+        // Get connected servers from server connection manager
+        let connections = self.server_connections.get_all_connections().await;
+        
+        for connection in connections {
+            if connection.is_registered() {
+                let stats_msg = if is_operator && self.config.server.show_server_details_in_stats {
+                    // Show detailed server information to operators (if configured)
+                    NumericReply::stats_link_info(
+                        &connection.info.name,
+                        0, // sendq - TODO: implement send queue tracking
+                        0, // sent_messages - TODO: implement message tracking
+                        0, // sent_bytes - TODO: implement byte tracking
+                        0, // received_messages - TODO: implement message tracking
+                        0, // received_bytes - TODO: implement byte tracking
+                        0, // time_online - TODO: implement connection time tracking
+                    )
+                } else {
+                    // Show limited information to non-operators or when configured to hide details
+                    NumericReply::stats_link_info(
+                        "***", // Hide server name for security
                         0, // sendq
                         0, // sent_messages
                         0, // sent_bytes
                         0, // received_messages
                         0, // received_bytes
                         0, // time_online
-                    );
-                    let _ = client.send(stats_msg);
-                }
-                "c" => {
-                    // Connection information
-                    let stats_msg = NumericReply::stats_commands(
-                        "CONNECT",
-                        0, // count
-                        0, // bytes
-                        0, // remote_count
-                    );
-                    let _ = client.send(stats_msg);
-                }
-                _ => {
-                    // Default stats
-                    let stats_msg = NumericReply::stats_commands(
-                        "TOTAL",
-                        0, // count
-                        0, // bytes
-                        0, // remote_count
-                    );
-                    let _ = client.send(stats_msg);
-                }
+                    )
+                };
+                let _ = client.send(stats_msg);
             }
+        }
+        
+        Ok(())
+    }
+    
+    /// Handle STATS m - Commands usage statistics
+    async fn handle_stats_commands(&self, client: &Client, stats: &crate::ServerStatistics) -> Result<()> {
+        let top_commands = stats.get_top_commands(10); // Top 10 commands
+        
+        for (command, count) in top_commands {
+            let stats_msg = NumericReply::stats_commands(
+                &command,
+                count,
+                0, // bytes - TODO: implement byte tracking per command
+                0, // remote_count - TODO: implement remote tracking
+            );
+            let _ = client.send(stats_msg);
+        }
+        
+        Ok(())
+    }
+    
+    /// Handle STATS o - Operators currently online
+    async fn handle_stats_operators(&self, client: &Client) -> Result<()> {
+        let users = self.users.read().await;
+        
+        // Check if the requesting user is an operator
+        let requesting_user = users.get(&client.user_id);
+        let is_operator = requesting_user.map(|u| u.is_operator).unwrap_or(false);
+        
+        for user in users.values() {
+            if user.is_operator {
+                let stats_msg = if is_operator {
+                    // Show full information to operators
+                    NumericReply::stats_oline(
+                        &format!("{}@{}", user.username, user.host),
+                        &user.nick,
+                        0, // port - not applicable for users
+                        "Operator",
+                    )
+                } else {
+                    // Show limited information to non-operators
+                    NumericReply::stats_oline(
+                        "***@***", // Hide hostmask
+                        &user.nick,
+                        0, // port - not applicable for users
+                        "Operator",
+                    )
+                };
+                let _ = client.send(stats_msg);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Handle STATS y - Class information
+    async fn handle_stats_classes(&self, client: &Client) -> Result<()> {
+        // Default class information
+        let stats_msg = NumericReply::stats_yline(
+            "default",
+            120, // ping frequency in seconds
+            600, // connect frequency in seconds
+            1024, // max sendq
+        );
+        let _ = client.send(stats_msg);
+        
+        Ok(())
+    }
+    
+    /// Handle STATS c - Connection information
+    async fn handle_stats_connections(&self, client: &Client, stats: &crate::ServerStatistics) -> Result<()> {
+        // Check if the requesting user is an operator
+        let users = self.users.read().await;
+        let requesting_user = users.get(&client.user_id);
+        let is_operator = requesting_user.map(|u| u.is_operator).unwrap_or(false);
+        
+        let stats_msg = if is_operator && self.config.server.show_server_details_in_stats {
+            // Show detailed connection information to operators (if configured)
+            NumericReply::stats_commands(
+                "CONNECTIONS",
+                stats.total_connections,
+                stats.total_bytes_received + stats.total_bytes_sent,
+                stats.current_servers,
+            )
+        } else {
+            // Show limited information to non-operators or when configured to hide details
+            NumericReply::stats_commands(
+                "CONNECTIONS",
+                stats.current_clients, // Only show current clients, not total
+                0, // Hide byte counts
+                0, // Hide server count
+            )
+        };
+        let _ = client.send(stats_msg);
+        
+        Ok(())
+    }
+    
+    /// Handle MOTD command
+    async fn handle_motd(&self, client_id: uuid::Uuid, _message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            let motd_messages = self.motd_manager.get_all_motd_messages(&self.config.server.name).await;
             
-            let end_msg = NumericReply::end_of_stats(query);
-            let _ = client.send(end_msg);
+            for message in motd_messages {
+                let _ = client.send(message);
+            }
         }
         Ok(())
     }
@@ -1614,6 +2241,59 @@ impl Server {
             }
         });
 
+        Ok(())
+    }
+    
+    /// Handle SQUIT command for operators
+    async fn handle_operator_squit(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        let client = connection_handler.get_client(&client_id)
+            .ok_or_else(|| Error::User("Client not found".to_string()))?;
+
+        // Check if client is registered
+        if !client.is_registered() {
+            let error_msg = NumericReply::not_registered();
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Validate parameters
+        if message.params.is_empty() {
+            let error_msg = NumericReply::need_more_params("SQUIT");
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        let target_server = &message.params[0];
+        let reason = message.params.get(1).map(|s| s.as_str()).unwrap_or("Operator requested");
+
+        // Check if user is an operator
+        let user = client.user.as_ref().unwrap();
+        if !user.is_operator {
+            let error_msg = NumericReply::no_privileges();
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Check if target server is connected
+        if !self.server_connections.is_connected(target_server).await {
+            let error_msg = NumericReply::no_such_server(target_server);
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Send SQUIT to the target server and propagate to others
+        let squit_message = Message::new(
+            MessageType::ServerQuit,
+            vec![target_server.to_string(), reason.to_string()]
+        );
+        
+        self.propagate_to_servers(squit_message).await?;
+        
+        // Remove the server connection locally
+        self.server_connections.remove_connection(target_server).await?;
+        
+        tracing::info!("Operator {} issued SQUIT for server {}: {}", user.nick, target_server, reason);
         Ok(())
     }
 

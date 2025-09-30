@@ -46,6 +46,13 @@ impl ConnectionHandler {
         is_client_connection: bool,
         is_server_connection: bool,
     ) -> Result<()> {
+        // Check throttling for client connections
+        if is_client_connection && !is_server_connection {
+            // TODO: Integrate with throttling module
+            // For now, we'll just log the connection attempt
+            tracing::debug!("Client connection attempt from {}", remote_addr);
+        }
+        
         let local_addr = stream.local_addr()?;
         let client_id = Uuid::new_v4();
         

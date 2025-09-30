@@ -82,6 +82,11 @@ pub enum NumericReply {
     RplStatsUptime = 242,
     RplStatsOLine = 243,
     RplStatsHLine = 244,
+    RplStatsM = 244, // Module-specific stats
+    RplMotdStart = 375,
+    RplMotd = 372,
+    RplMotdEnd = 376,
+    RplNoMotd = 422,
     RplUmodeIs = 221,
     RplServList = 234,
     RplServListEnd = 235,
@@ -580,6 +585,14 @@ impl NumericReply {
         )
     }
     
+    /// ERR_NOSUCHSERVER
+    pub fn no_such_server(server: &str) -> Message {
+        Self::ErrNoSuchServer.reply(
+            "*",
+            vec![format!("No such server: {}", server)],
+        )
+    }
+    
     /// ERR_NEEDMOREPARAMS
     pub fn need_more_params(command: &str) -> Message {
         Self::ErrNeedMoreParams.reply(
@@ -731,6 +744,70 @@ impl NumericReply {
         Self::RplEndOfStats.reply(
             "*",
             vec![letter.to_string(), "End of STATS report".to_string()],
+        )
+    }
+    
+    /// RPL_STATSUPTIME
+    pub fn stats_uptime(server: &str, uptime_seconds: u64) -> Message {
+        Self::RplStatsUptime.reply(
+            "*",
+            vec![server.to_string(), uptime_seconds.to_string()],
+        )
+    }
+    
+    /// RPL_STATSOLINE (Operator information)
+    pub fn stats_oline(hostmask: &str, name: &str, port: u16, class: &str) -> Message {
+        Self::RplStatsOLine.reply(
+            "*",
+            vec![hostmask.to_string(), name.to_string(), port.to_string(), class.to_string()],
+        )
+    }
+    
+    /// RPL_STATSYLINE (Class information)
+    pub fn stats_yline(class: &str, ping_freq: u32, connect_freq: u32, max_sendq: u32) -> Message {
+        Self::RplStatsYLine.reply(
+            "*",
+            vec![class.to_string(), ping_freq.to_string(), connect_freq.to_string(), max_sendq.to_string()],
+        )
+    }
+    
+    /// RPL_STATSM (Module-specific stats)
+    pub fn stats_module(module: &str, data: &str) -> Message {
+        Self::RplStatsM.reply(
+            "*",
+            vec![module.to_string(), data.to_string()],
+        )
+    }
+    
+    /// RPL_MOTDSTART (MOTD start)
+    pub fn motd_start(server: &str) -> Message {
+        Self::RplMotdStart.reply(
+            "*",
+            vec![format!(":- {} Message of the Day -", server)],
+        )
+    }
+    
+    /// RPL_MOTD (MOTD line)
+    pub fn motd_line(line: &str) -> Message {
+        Self::RplMotd.reply(
+            "*",
+            vec![format!(":- {}", line)],
+        )
+    }
+    
+    /// RPL_ENDOFMOTD (MOTD end)
+    pub fn motd_end(server: &str) -> Message {
+        Self::RplMotdEnd.reply(
+            "*",
+            vec![format!(":End of /MOTD command.")],
+        )
+    }
+    
+    /// ERR_NOMOTD (No MOTD file)
+    pub fn no_motd(server: &str) -> Message {
+        Self::RplNoMotd.reply(
+            "*",
+            vec![format!(":MOTD file is missing")],
         )
     }
     

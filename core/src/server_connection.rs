@@ -252,6 +252,46 @@ impl ServerConnectionManager {
             None
         }
     }
+    
+    /// Get a mutable server connection by name
+    pub async fn get_connection_mut(&self, _server_name: &str) -> Option<tokio::sync::RwLockWriteGuard<'_, ServerConnection>> {
+        // This is a bit tricky - we need to return a write guard
+        // For now, let's add a method to update connection state
+        None // TODO: Implement proper mutable access
+    }
+    
+    /// Update server connection state
+    pub async fn update_connection_state(&self, server_name: &str, state: ServerConnectionState) -> Result<()> {
+        let mut connections = self.connections.write().await;
+        if let Some(connection) = connections.get_mut(server_name) {
+            connection.state = state;
+            Ok(())
+        } else {
+            Err(Error::Server(format!("Server connection {} not found", server_name)))
+        }
+    }
+    
+    /// Update server connection ping time
+    pub async fn update_connection_ping(&self, server_name: &str) -> Result<()> {
+        let mut connections = self.connections.write().await;
+        if let Some(connection) = connections.get_mut(server_name) {
+            connection.update_ping();
+            Ok(())
+        } else {
+            Err(Error::Server(format!("Server connection {} not found", server_name)))
+        }
+    }
+    
+    /// Update server connection pong time
+    pub async fn update_connection_pong(&self, server_name: &str) -> Result<()> {
+        let mut connections = self.connections.write().await;
+        if let Some(connection) = connections.get_mut(server_name) {
+            connection.update_pong();
+            Ok(())
+        } else {
+            Err(Error::Server(format!("Server connection {} not found", server_name)))
+        }
+    }
 
     /// Get all server connections
     pub async fn get_all_connections(&self) -> Vec<ServerConnection> {

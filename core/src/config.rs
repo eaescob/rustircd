@@ -61,6 +61,10 @@ pub struct ServerConfig {
     pub admin_location1: String,
     /// Administrator location line 2
     pub admin_location2: String,
+    /// Show server IPs/hostnames in STATS commands (even for operators)
+    pub show_server_details_in_stats: bool,
+    /// MOTD (Message of the Day) file path
+    pub motd_file: Option<String>,
 }
 
 /// Network configuration
@@ -373,6 +377,27 @@ pub struct ModuleConfig {
     pub enabled_modules: Vec<String>,
     /// Module-specific settings
     pub module_settings: HashMap<String, serde_json::Value>,
+    /// Throttling configuration
+    pub throttling: ThrottlingConfig,
+}
+
+/// Throttling configuration for connection rate limiting
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThrottlingConfig {
+    /// Enable throttling module
+    pub enabled: bool,
+    /// Maximum connections allowed per IP within the time window
+    pub max_connections_per_ip: usize,
+    /// Time window in seconds for connection counting
+    pub time_window_seconds: u64,
+    /// Initial throttling duration in seconds (stage 1)
+    pub initial_throttle_seconds: u64,
+    /// Maximum number of throttling stages
+    pub max_stages: u8,
+    /// Factor by which throttling increases between stages
+    pub stage_factor: u64,
+    /// Cleanup interval in seconds for expired throttle entries
+    pub cleanup_interval_seconds: u64,
 }
 
 /// Database configuration
@@ -468,6 +493,8 @@ impl Default for ServerConfig {
             admin_email: "admin@example.com".to_string(),
             admin_location1: "Rust IRC Network".to_string(),
             admin_location2: "https://github.com/rustircd/rustircd".to_string(),
+            show_server_details_in_stats: true, // Default to showing details for operators
+            motd_file: Some("motd.txt".to_string()), // Default MOTD file
         }
     }
 }
@@ -570,6 +597,21 @@ impl Default for ModuleConfig {
             module_directory: "modules".to_string(),
             enabled_modules: Vec::new(),
             module_settings: HashMap::new(),
+            throttling: ThrottlingConfig::default(),
+        }
+    }
+}
+
+impl Default for ThrottlingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_connections_per_ip: 5,
+            time_window_seconds: 60,
+            initial_throttle_seconds: 10,
+            max_stages: 10,
+            stage_factor: 10,
+            cleanup_interval_seconds: 300, // 5 minutes
         }
     }
 }

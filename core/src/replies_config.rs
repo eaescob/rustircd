@@ -572,6 +572,72 @@ impl RepliesConfig {
         
         replies.insert(215, ReplyConfig {
             code: 215,
+            text: "I {host} * {name} {port} {class}".to_string(),
+            description: Some("RPL_STATSILINE - Stats I line".to_string()),
+        });
+        
+        replies.insert(216, ReplyConfig {
+            code: 216,
+            text: "K {host} * {username} {port} {class}".to_string(),
+            description: Some("RPL_STATSKLINE - Stats K line".to_string()),
+        });
+        
+        replies.insert(218, ReplyConfig {
+            code: 218,
+            text: "Y {class} {ping_freq} {connect_freq} {max_sendq}".to_string(),
+            description: Some("RPL_STATSYLINE - Stats Y line".to_string()),
+        });
+        
+        replies.insert(219, ReplyConfig {
+            code: 219,
+            text: "{letter} :End of STATS report".to_string(),
+            description: Some("RPL_ENDOFSTATS - End of stats".to_string()),
+        });
+        
+        replies.insert(242, ReplyConfig {
+            code: 242,
+            text: ":Server Up {uptime} seconds".to_string(),
+            description: Some("RPL_STATSUPTIME - Server uptime".to_string()),
+        });
+        
+        replies.insert(243, ReplyConfig {
+            code: 243,
+            text: "O {hostmask} * {name} {port} {class}".to_string(),
+            description: Some("RPL_STATSOLINE - Stats O line".to_string()),
+        });
+        
+        replies.insert(244, ReplyConfig {
+            code: 244,
+            text: "H {host} * {name} {port} {class}".to_string(),
+            description: Some("RPL_STATSHLINE - Stats H line".to_string()),
+        });
+        
+        replies.insert(375, ReplyConfig {
+            code: 375,
+            text: ":- {server} Message of the Day -".to_string(),
+            description: Some("RPL_MOTDSTART - MOTD start".to_string()),
+        });
+        
+        replies.insert(372, ReplyConfig {
+            code: 372,
+            text: ":- {line}".to_string(),
+            description: Some("RPL_MOTD - MOTD line".to_string()),
+        });
+        
+        replies.insert(376, ReplyConfig {
+            code: 376,
+            text: ":End of /MOTD command.".to_string(),
+            description: Some("RPL_ENDOFMOTD - MOTD end".to_string()),
+        });
+        
+        replies.insert(422, ReplyConfig {
+            code: 422,
+            text: ":MOTD file is missing".to_string(),
+            description: Some("ERR_NOMOTD - No MOTD file".to_string()),
+        });
+        
+        replies.insert(215, ReplyConfig {
+            code: 215,
             text: "I {host} * {host} {port} {class}".to_string(),
             description: Some("RPL_STATSILINE - Stats I line".to_string()),
         });

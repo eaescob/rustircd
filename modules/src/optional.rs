@@ -1,6 +1,6 @@
 //! Optional IRC commands module
 
-use rustircd_core::{Module, module::ModuleResult, Client, Message, User, Error, Result};
+use rustircd_core::{Module, module::{ModuleResult, ModuleStatsResponse}, Client, Message, User, Error, Result};
 use async_trait::async_trait;
 
 /// Optional IRC commands module
@@ -118,6 +118,16 @@ impl Module for OptionalModule {
     
     async fn handle_numeric_reply(&mut self, _numeric: u16, _params: Vec<String>) -> Result<()> {
         Ok(())
+    }
+    
+    async fn handle_stats_query(&mut self, _query: &str, _client_id: uuid::Uuid, _server: Option<&crate::Server>) -> Result<Vec<ModuleStatsResponse>> {
+        // Optional module doesn't provide STATS queries
+        Ok(vec![])
+    }
+    
+    fn get_stats_queries(&self) -> Vec<String> {
+        // Optional module doesn't provide STATS queries
+        vec![]
     }
 }
 

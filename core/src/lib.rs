@@ -19,6 +19,10 @@ pub mod database;
 pub mod broadcast;
 pub mod network;
 pub mod extensions;
+pub mod burst_extensions;
+pub mod throttling_manager;
+pub mod statistics;
+pub mod motd;
 
 #[cfg(test)]
 mod tests;
@@ -37,7 +41,11 @@ pub use replies_config::{RepliesConfig, ReplyConfig, ServerInfo as RepliesServer
 pub use database::{Database, DatabaseConfig, UserHistoryEntry, ServerInfo as DatabaseServerInfo, ChannelInfo};
 pub use broadcast::{BroadcastSystem, BroadcastTarget, BroadcastMessage, BroadcastPriority, MessageBuilder};
 pub use network::{NetworkQueryManager, NetworkMessageHandler, NetworkQuery, NetworkResponse, NetworkMessage};
-pub use extensions::{ExtensionManager, UserExtension, MessageExtension, CapabilityExtension, MessageTagExtension, CapabilityAction, CapabilityResult};
+pub use extensions::{ExtensionManager, UserExtension, MessageExtension, CapabilityExtension, MessageTagExtension, CapabilityAction, CapabilityResult, BurstExtension, BurstType};
+pub use burst_extensions::{CoreUserBurstExtension, CoreServerBurstExtension};
+pub use throttling_manager::ThrottlingManager;
+pub use statistics::{StatisticsManager, ServerStatistics};
+pub use motd::MotdManager;
 
 /// Re-exports for convenience
 pub use async_trait::async_trait;

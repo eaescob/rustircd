@@ -58,6 +58,7 @@ pub enum MessageType {
     Trace,
     Admin,
     Info,
+    Motd,
     
     // Messaging
     PrivMsg,
@@ -76,6 +77,13 @@ pub enum MessageType {
     Away,
     Ison,
     Userhost,
+    
+    // Server-to-server specific
+    ServerBurst,
+    UserBurst,
+    ChannelBurst,
+    ServerPing,
+    ServerPong,
     
     // IRCv3 extensions
     Cap,
@@ -111,6 +119,7 @@ impl fmt::Display for MessageType {
             MessageType::Trace => "TRACE",
             MessageType::Admin => "ADMIN",
             MessageType::Info => "INFO",
+            MessageType::Motd => "MOTD",
             MessageType::PrivMsg => "PRIVMSG",
             MessageType::Notice => "NOTICE",
             MessageType::Who => "WHO",
@@ -123,6 +132,11 @@ impl fmt::Display for MessageType {
             MessageType::Away => "AWAY",
             MessageType::Ison => "ISON",
             MessageType::Userhost => "USERHOST",
+            MessageType::ServerBurst => "BURST",
+            MessageType::UserBurst => "UBURST",
+            MessageType::ChannelBurst => "CBURST",
+            MessageType::ServerPing => "PING",
+            MessageType::ServerPong => "PONG",
             MessageType::Cap => "CAP",
             MessageType::Authenticate => "AUTHENTICATE",
             MessageType::Custom(cmd) => cmd,
@@ -157,6 +171,7 @@ impl From<&str> for MessageType {
             "TRACE" => MessageType::Trace,
             "ADMIN" => MessageType::Admin,
             "INFO" => MessageType::Info,
+            "MOTD" => MessageType::Motd,
             "PRIVMSG" => MessageType::PrivMsg,
             "NOTICE" => MessageType::Notice,
             "WHO" => MessageType::Who,
@@ -169,6 +184,9 @@ impl From<&str> for MessageType {
             "AWAY" => MessageType::Away,
             "ISON" => MessageType::Ison,
             "USERHOST" => MessageType::Userhost,
+            "BURST" => MessageType::ServerBurst,
+            "UBURST" => MessageType::UserBurst,
+            "CBURST" => MessageType::ChannelBurst,
             "CAP" => MessageType::Cap,
             "AUTHENTICATE" => MessageType::Authenticate,
             _ => MessageType::Custom(s.to_string()),

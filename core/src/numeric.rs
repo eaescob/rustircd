@@ -136,6 +136,8 @@ pub enum NumericReply {
     ErrNotRegistered = 451,
     ErrNeedMoreParams = 461,
     ErrAlreadyRegistered = 462,
+    ErrUsersDontMatch = 502,
+    ErrCantSetOperatorMode = 503,
     ErrNoPermForHost = 463,
     ErrPasswordMismatch = 464,
     ErrYoureBannedCreep = 465,
@@ -1094,6 +1096,48 @@ impl NumericReply {
             vec![
                 format!("Current global users: {}, max: {}", current, max),
             ],
+        )
+    }
+
+    // User mode replies
+    
+    /// RPL_UMODEIS
+    pub fn umode_is(nick: &str, modes: &str) -> Message {
+        Self::RplUmodeIs.reply(
+            "*",
+            vec![nick.to_string(), modes.to_string()],
+        )
+    }
+
+    /// ERR_USERSDONTMATCH
+    pub fn err_users_dont_match() -> Message {
+        Self::ErrUsersDontMatch.reply(
+            "*",
+            vec!["Cannot change mode for other users".to_string()],
+        )
+    }
+
+    /// ERR_NEEDMOREPARAMS
+    pub fn err_need_more_params(command: &str) -> Message {
+        Self::ErrNeedMoreParams.reply(
+            "*",
+            vec![command.to_string(), "Not enough parameters".to_string()],
+        )
+    }
+
+    /// ERR_UNKNOWNCOMMAND
+    pub fn err_unknown_command(command: &str) -> Message {
+        Self::ErrUnknownCommand.reply(
+            "*",
+            vec![format!("{} :Unknown command", command)],
+        )
+    }
+
+    /// ERR_CANTSETOPERATORMODE
+    pub fn err_cant_set_operator_mode() -> Message {
+        Self::ErrCantSetOperatorMode.reply(
+            "*",
+            vec!["Operator mode can only be granted through OPER command".to_string()],
         )
     }
 

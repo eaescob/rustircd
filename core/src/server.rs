@@ -2534,6 +2534,220 @@ impl Server {
         Ok(messages)
     }
     
+    /// Handle MODE command - User and channel mode management
+    /// RFC 1459 Section 4.2.3
+    pub async fn handle_mode(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        if message.params.is_empty() {
+            return self.send_error(client_id, NumericReply::err_need_more_params("MODE")).await;
+        }
+
+        let target = &message.params[0];
+        
+        // Check if target is a channel (starts with #, &, +, or !)
+        if target.starts_with('#') || target.starts_with('&') || target.starts_with('+') || target.starts_with('!') {
+            // Channel mode - delegate to channel module
+            self.handle_channel_mode(client_id, message).await
+        } else {
+            // User mode - handle user mode changes
+            self.handle_user_mode(client_id, message).await
+        }
+    }
+    
+    /// Handle user mode changes
+    async fn handle_user_mode(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let target = &message.params[0];
+        
+        // Get requesting user
+        let users = self.users.read().await;
+        let requesting_user = users.get(&client_id)
+            .ok_or_else(|| Error::User("User not found".to_string()))?;
+        
+        // Check if user is trying to change their own modes or someone else's
+        let is_self = target == &requesting_user.nick;
+        
+        if !is_self {
+            // Only operators can change other users' modes
+            if !requesting_user.is_operator {
+                return self.send_error(client_id, NumericReply::err_users_dont_match()).await;
+            }
+        }
+        
+        // Get target user
+        let target_user = if is_self {
+            requesting_user.clone()
+        } else {
+            // Find target user by nickname
+            let target_user = users.values()
+                .find(|u| u.nick == *target)
+                .ok_or_else(|| Error::User("No such nick".to_string()))?;
+            target_user.clone()
+        };
+        
+        // If no mode changes specified, just show current modes
+        if message.params.len() == 1 {
+            let modes = target_user.modes_string();
+            let reply = NumericReply::umode_is(&target_user.nick, &modes);
+            return self.send_to_client(client_id, reply).await;
+        }
+        
+        // Parse mode changes
+        let mode_string = &message.params[1];
+        let mode_changes = self.parse_mode_changes(mode_string)?;
+        
+        // Apply mode changes
+        let mut updated_user = target_user.clone();
+        let mut changes_applied = Vec::new();
+        
+        for (action, mode_char) in mode_changes {
+            if let Some(user_mode) = crate::user_modes::UserMode::from_char(mode_char) {
+                let adding = action == '+';
+                
+                // Validate mode change
+                if let Err(_e) = self.validate_mode_change(
+                    &target_user,
+                    user_mode,
+                    adding,
+                    &target_user.nick,
+                    &requesting_user.nick,
+                    requesting_user.is_operator,
+                ) {
+                    // Use specific error for operator mode attempts
+                    let error_reply = if adding && user_mode.oper_only() {
+                        NumericReply::err_cant_set_operator_mode()
+                    } else {
+                        NumericReply::err_users_dont_match()
+                    };
+                    return self.send_error(client_id, error_reply).await;
+                }
+                
+                // Apply mode change
+                if adding {
+                    updated_user.add_mode(mode_char);
+                    changes_applied.push(format!("+{}", mode_char));
+                } else {
+                    updated_user.remove_mode(mode_char);
+                    changes_applied.push(format!("-{}", mode_char));
+                }
+            }
+        }
+        
+        // Update user in database
+        {
+            let mut users = self.users.write().await;
+            users.insert(client_id, updated_user.clone());
+        }
+        
+        // Send mode change notification
+        if !changes_applied.is_empty() {
+            let changes_string = changes_applied.join("");
+            let mode_change_msg = Message::new(
+                MessageType::Mode,
+                vec![target_user.nick.clone(), changes_string],
+            );
+            
+            // Send to the user whose modes changed
+            self.send_to_client(client_id, mode_change_msg.clone()).await?;
+            
+            // If not self, also send to the requesting user
+            if !is_self {
+                let requesting_client_id = {
+                    let users = self.users.read().await;
+                    users.values()
+                        .find(|u| u.nick == requesting_user.nick)
+                        .map(|u| u.id)
+                        .ok_or_else(|| Error::User("Requesting user not found".to_string()))?
+                };
+                self.send_to_client(requesting_client_id, mode_change_msg).await?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Handle channel mode changes (placeholder - delegate to channel module)
+    async fn handle_channel_mode(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        // TODO: Implement channel mode handling
+        // This should delegate to the channel module
+        tracing::info!("Channel mode handling not yet implemented");
+        self.send_error(client_id, NumericReply::err_unknown_command("CHANNEL MODE")).await
+    }
+    
+    /// Parse mode change string (e.g., "+iw", "-a+o")
+    fn parse_mode_changes(&self, mode_string: &str) -> Result<Vec<(bool, char)>> {
+        let mut changes = Vec::new();
+        let mut current_action = true; // true for add (+), false for remove (-)
+        
+        for c in mode_string.chars() {
+            match c {
+                '+' => current_action = true,
+                '-' => current_action = false,
+                _ => {
+                    if crate::user_modes::is_valid_user_mode(c) {
+                        changes.push((current_action, c));
+                    }
+                }
+            }
+        }
+        
+        Ok(changes)
+    }
+    
+    /// Validate mode change for a user
+    fn validate_mode_change(
+        &self,
+        user: &crate::user::User,
+        mode: crate::user_modes::UserMode,
+        adding: bool,
+        target_user: &str,
+        requesting_user: &str,
+        requesting_user_is_operator: bool,
+    ) -> Result<(), String> {
+        let is_self = target_user == requesting_user;
+        
+        // Special case: Operator mode can only be granted through OPER command
+        if adding && mode.oper_only() {
+            return Err("Operator mode can only be granted through OPER command".to_string());
+        }
+        
+        // Check operator requirements for removal of restricted modes
+        if !adding && mode.requires_operator() && !requesting_user_is_operator {
+            // Exception: Users can always remove their own operator mode
+            if !(is_self && (mode == crate::user_modes::UserMode::Operator || mode == crate::user_modes::UserMode::LocalOperator)) {
+                return Err("Permission denied".to_string());
+            }
+        }
+        
+        // Check if mode can only be set by the user themselves
+        if !is_self && mode.self_only() {
+            return Err("You can only change your own modes".to_string());
+        }
+        
+        // Check if mode is already set/unset
+        let currently_has = user.has_mode(mode.to_char());
+        if adding && currently_has {
+            return Err(format!("Mode {} is already set", mode.to_char()));
+        }
+        if !adding && !currently_has {
+            return Err(format!("Mode {} is not set", mode.to_char()));
+        }
+        
+        Ok(())
+    }
+    
+    /// Send error message to client
+    async fn send_error(&self, client_id: uuid::Uuid, error_msg: Message) -> Result<()> {
+        self.send_to_client(client_id, error_msg).await
+    }
+    
+    /// Send message to specific client
+    async fn send_to_client(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            client.send(message)?;
+        }
+        Ok(())
+    }
+    
     /// Handle LUSERS command - Network statistics
     /// RFC 1459 Section 4.3.1
     pub async fn handle_lusers(&self, client_id: uuid::Uuid, _message: Message) -> Result<()> {

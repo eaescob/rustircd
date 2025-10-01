@@ -852,6 +852,25 @@ impl RepliesConfig {
             description: Some("RPL_GLOBALUSERS - Global users info".to_string()),
         });
         
+        // User mode replies
+        replies.insert(221, ReplyConfig {
+            code: 221,
+            text: "{param0} {param1}".to_string(),
+            description: Some("RPL_UMODEIS - User mode is".to_string()),
+        });
+        
+        replies.insert(502, ReplyConfig {
+            code: 502,
+            text: ":Cannot change mode for other users".to_string(),
+            description: Some("ERR_USERSDONTMATCH - Users don't match".to_string()),
+        });
+        
+        replies.insert(503, ReplyConfig {
+            code: 503,
+            text: ":Operator mode can only be granted through OPER command".to_string(),
+            description: Some("ERR_CANTSETOPERATORMODE - Can't set operator mode".to_string()),
+        });
+        
         // Rehash
         replies.insert(382, ReplyConfig {
             code: 382,

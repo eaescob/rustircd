@@ -809,6 +809,49 @@ impl RepliesConfig {
             description: Some("RPL_ENDOFMOTD - End of MOTD".to_string()),
         });
         
+        // LUSERS command replies
+        replies.insert(251, ReplyConfig {
+            code: 251,
+            text: ":There are {param0} users and {param1} services on {param2} servers".to_string(),
+            description: Some("RPL_LUSERCLIENT - LUSER client info".to_string()),
+        });
+        
+        replies.insert(252, ReplyConfig {
+            code: 252,
+            text: "{param0} :operator(s) online".to_string(),
+            description: Some("RPL_LUSEROP - LUSER operator info".to_string()),
+        });
+        
+        replies.insert(253, ReplyConfig {
+            code: 253,
+            text: "{param0} :unknown connection(s)".to_string(),
+            description: Some("RPL_LUSERUNKNOWN - LUSER unknown connections".to_string()),
+        });
+        
+        replies.insert(254, ReplyConfig {
+            code: 254,
+            text: "{param0} :channels formed".to_string(),
+            description: Some("RPL_LUSERCHANNELS - LUSER channels".to_string()),
+        });
+        
+        replies.insert(255, ReplyConfig {
+            code: 255,
+            text: ":I have {param0} clients and {param1} servers".to_string(),
+            description: Some("RPL_LUSERME - LUSER server info".to_string()),
+        });
+        
+        replies.insert(265, ReplyConfig {
+            code: 265,
+            text: ":Current local users: {param0}, max: {param1}".to_string(),
+            description: Some("RPL_LOCALUSERS - Local users info".to_string()),
+        });
+        
+        replies.insert(266, ReplyConfig {
+            code: 266,
+            text: ":Current global users: {param0}, max: {param1}".to_string(),
+            description: Some("RPL_GLOBALUSERS - Global users info".to_string()),
+        });
+        
         // Rehash
         replies.insert(382, ReplyConfig {
             code: 382,

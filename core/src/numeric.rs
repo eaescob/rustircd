@@ -1033,6 +1033,70 @@ impl NumericReply {
         )
     }
 
+    // LUSERS command replies
+    
+    /// RPL_LUSERCLIENT
+    pub fn luser_client(users: u32, services: u32, servers: u32) -> Message {
+        Self::RplLUserClient.reply(
+            "*",
+            vec![
+                format!("There are {} users and {} services on {} servers", users, services, servers),
+            ],
+        )
+    }
+    
+    /// RPL_LUSEROP
+    pub fn luser_op(operators: u32) -> Message {
+        Self::RplLUserOp.reply(
+            "*",
+            vec![format!("{} operator(s) online", operators)],
+        )
+    }
+    
+    /// RPL_LUSERUNKNOWN
+    pub fn luser_unknown(unknown: u32) -> Message {
+        Self::RplLUserUnknown.reply(
+            "*",
+            vec![format!("{} unknown connection(s)", unknown)],
+        )
+    }
+    
+    /// RPL_LUSERCHANNELS
+    pub fn luser_channels(channels: u32) -> Message {
+        Self::RplLUserChannels.reply(
+            "*",
+            vec![format!("{} channels formed", channels)],
+        )
+    }
+    
+    /// RPL_LUSERME
+    pub fn luser_me(connections: u32, servers: u32) -> Message {
+        Self::RplLUserMe.reply(
+            "*",
+            vec![format!("I have {} clients and {} servers", connections, servers)],
+        )
+    }
+    
+    /// RPL_LOCALUSERS
+    pub fn local_users(current: u32, max: u32) -> Message {
+        Self::RplLocalUsers.reply(
+            "*",
+            vec![
+                format!("Current local users: {}, max: {}", current, max),
+            ],
+        )
+    }
+    
+    /// RPL_GLOBALUSERS
+    pub fn global_users(current: u32, max: u32) -> Message {
+        Self::RplGlobalUsers.reply(
+            "*",
+            vec![
+                format!("Current global users: {}, max: {}", current, max),
+            ],
+        )
+    }
+
         /// ERR_NOPRIVILEGES
         pub fn no_privileges() -> Message {
             Self::ErrNoPrivileges.reply(

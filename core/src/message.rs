@@ -77,6 +77,7 @@ pub enum MessageType {
     Away,
     Ison,
     Userhost,
+    Lusers,
     
     // Server-to-server specific
     ServerBurst,
@@ -132,6 +133,7 @@ impl fmt::Display for MessageType {
             MessageType::Away => "AWAY",
             MessageType::Ison => "ISON",
             MessageType::Userhost => "USERHOST",
+            MessageType::Lusers => "LUSERS",
             MessageType::ServerBurst => "BURST",
             MessageType::UserBurst => "UBURST",
             MessageType::ChannelBurst => "CBURST",
@@ -184,6 +186,7 @@ impl From<&str> for MessageType {
             "AWAY" => MessageType::Away,
             "ISON" => MessageType::Ison,
             "USERHOST" => MessageType::Userhost,
+            "LUSERS" => MessageType::Lusers,
             "BURST" => MessageType::ServerBurst,
             "UBURST" => MessageType::UserBurst,
             "CBURST" => MessageType::ChannelBurst,

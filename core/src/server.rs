@@ -2533,4 +2533,74 @@ impl Server {
         tracing::info!("Prepared {} channel burst messages for server: {}", messages.len(), target_server);
         Ok(messages)
     }
+    
+    /// Handle LUSERS command - Network statistics
+    /// RFC 1459 Section 4.3.1
+    pub async fn handle_lusers(&self, client_id: uuid::Uuid, _message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            // Get network statistics
+            let users = self.get_user_count().await;
+            let operators = self.get_operator_count().await;
+            let channels = self.get_channel_count().await;
+            let servers = self.get_server_count().await;
+            let unknown_connections = self.get_unknown_connection_count().await;
+            let local_users = self.get_local_user_count().await;
+            let max_local_users = self.config.server.max_clients;
+            let global_users = self.get_global_user_count().await;
+            let max_global_users = max_local_users; // For now, assume same as local max
+            
+            // Send LUSERS replies
+            let _ = client.send(NumericReply::luser_client(users, 0, servers)); // 0 services for now
+            let _ = client.send(NumericReply::luser_op(operators));
+            let _ = client.send(NumericReply::luser_unknown(unknown_connections));
+            let _ = client.send(NumericReply::luser_channels(channels));
+            let _ = client.send(NumericReply::luser_me(local_users, servers));
+            let _ = client.send(NumericReply::local_users(local_users, max_local_users));
+            let _ = client.send(NumericReply::global_users(global_users, max_global_users));
+        }
+        Ok(())
+    }
+    
+    /// Get current user count
+    async fn get_user_count(&self) -> u32 {
+        let users = self.users.read().await;
+        users.len() as u32
+    }
+    
+    /// Get operator count
+    async fn get_operator_count(&self) -> u32 {
+        let users = self.users.read().await;
+        users.values().filter(|user| user.is_operator).count() as u32
+    }
+    
+    /// Get channel count
+    async fn get_channel_count(&self) -> u32 {
+        self.database.get_channel_count() as u32
+    }
+    
+    /// Get server count (including this server)
+    async fn get_server_count(&self) -> u32 {
+        let server_connections = self.server_connections.get_connections().await;
+        1 + server_connections.len() as u32 // +1 for this server
+    }
+    
+    /// Get unknown connection count (unregistered connections)
+    async fn get_unknown_connection_count(&self) -> u32 {
+        let connection_handler = self.connection_handler.read().await;
+        let registered_clients = connection_handler.get_registered_clients();
+        let total_clients = connection_handler.get_all_clients();
+        (total_clients.len() - registered_clients.len()) as u32
+    }
+    
+    /// Get local user count
+    async fn get_local_user_count(&self) -> u32 {
+        let users = self.users.read().await;
+        users.values().filter(|user| user.server == self.config.server.name).count() as u32
+    }
+    
+    /// Get global user count (all users across network)
+    async fn get_global_user_count(&self) -> u32 {
+        self.get_user_count().await // For now, same as local since we don't have network sync yet
+    }
 }

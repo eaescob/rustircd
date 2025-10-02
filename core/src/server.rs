@@ -88,7 +88,7 @@ impl Server {
     }
 
     /// Create a new server instance
-    pub fn new(config: Config) -> Self {
+    pub async fn new(config: Config) -> Self {
         let (connection_handler, _) = ConnectionHandler::new();
         
         // Initialize database
@@ -315,10 +315,11 @@ impl Server {
         
         // Spawn connection handler for this port
         let throttling_manager = self.throttling_manager.clone();
+        let statistics_manager = self.statistics_manager.clone();
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
-                    Ok((stream, addr)) => {
+                    Ok((mut stream, addr)) => {
                         // Determine connection type based on port configuration
                         let is_client_connection = matches!(connection_type, crate::config::PortConnectionType::Client | crate::config::PortConnectionType::Both);
                         let is_server_connection = matches!(connection_type, crate::config::PortConnectionType::Server | crate::config::PortConnectionType::Both);
@@ -341,10 +342,10 @@ impl Server {
                             }
                             
                             // Record connection statistics
-                            self.statistics_manager.record_connection().await;
+                            statistics_manager.record_connection().await;
                         } else if is_server_connection && !is_client_connection {
                             // Record server connection statistics
-                            self.statistics_manager.record_server_connection().await;
+                            statistics_manager.record_server_connection().await;
                         }
                         
                         let mut conn_handler = connection_handler.write().await;
@@ -886,6 +887,9 @@ impl Server {
             MessageType::Oper => {
                 self.handle_oper(client_id, message).await?;
             }
+            MessageType::Kill => {
+                self.handle_kill(client_id, message).await?;
+            }
             MessageType::ServerQuit => {
                 self.handle_operator_squit(client_id, message).await?;
             }
@@ -1166,7 +1170,10 @@ impl Server {
             let query = message.params.get(0).map(|s| s.as_str()).unwrap_or("");
             
             // Get current statistics
-            let stats = self.statistics_manager.statistics().read().await;
+            let stats_manager = self.statistics_manager.clone();
+            let stats_arc = stats_manager.statistics();
+            let stats_guard = stats_arc.read().await;
+            let stats = &*stats_guard;
             
             match query {
                 "l" => {
@@ -1200,7 +1207,7 @@ impl Server {
                     if let Ok(module_responses) = module_manager.handle_stats_query(query, client_id, Some(self)).await {
                         for response in module_responses {
                             match response {
-                                ModuleStatsResponse::Stats(letter, data) => {
+                                ModuleStatsResponse::Stats(letter, _data) => {
                                     let stats_msg = NumericReply::stats_commands(&letter, 0, 0, 0);
                                     let _ = client.send(stats_msg);
                                 }
@@ -1225,10 +1232,10 @@ impl Server {
     }
     
     /// Handle STATS l - Server links
-    async fn handle_stats_links(&self, client: &Client, stats: &crate::ServerStatistics) -> Result<()> {
+    async fn handle_stats_links(&self, client: &Client, _stats: &crate::ServerStatistics) -> Result<()> {
         // Check if the requesting user is an operator
         let users = self.users.read().await;
-        let requesting_user = users.get(&client.user_id);
+        let requesting_user = users.get(&client.id);
         let is_operator = requesting_user.map(|u| u.is_operator).unwrap_or(false);
         
         // Get connected servers from server connection manager
@@ -1273,7 +1280,7 @@ impl Server {
         for (command, count) in top_commands {
             let stats_msg = NumericReply::stats_commands(
                 &command,
-                count,
+                count.try_into().unwrap_or(u32::MAX),
                 0, // bytes - TODO: implement byte tracking per command
                 0, // remote_count - TODO: implement remote tracking
             );
@@ -1288,7 +1295,7 @@ impl Server {
         let users = self.users.read().await;
         
         // Check if the requesting user is an operator
-        let requesting_user = users.get(&client.user_id);
+        let requesting_user = users.get(&client.id);
         let is_operator = requesting_user.map(|u| u.is_operator).unwrap_or(false);
         
         for user in users.values() {
@@ -1335,16 +1342,16 @@ impl Server {
     async fn handle_stats_connections(&self, client: &Client, stats: &crate::ServerStatistics) -> Result<()> {
         // Check if the requesting user is an operator
         let users = self.users.read().await;
-        let requesting_user = users.get(&client.user_id);
+        let requesting_user = users.get(&client.id);
         let is_operator = requesting_user.map(|u| u.is_operator).unwrap_or(false);
         
         let stats_msg = if is_operator && self.config.server.show_server_details_in_stats {
             // Show detailed connection information to operators (if configured)
             NumericReply::stats_commands(
                 "CONNECTIONS",
-                stats.total_connections,
-                stats.total_bytes_received + stats.total_bytes_sent,
-                stats.current_servers,
+                stats.total_connections.try_into().unwrap_or(u32::MAX),
+                (stats.total_bytes_received + stats.total_bytes_sent).try_into().unwrap_or(u32::MAX),
+                stats.current_servers.try_into().unwrap_or(u32::MAX),
             )
         } else {
             // Show limited information to non-operators or when configured to hide details
@@ -2253,6 +2260,168 @@ impl Server {
         Ok(())
     }
     
+    /// Handle KILL command for operators
+    async fn handle_kill(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        let client = connection_handler.get_client(&client_id)
+            .ok_or_else(|| Error::User("Client not found".to_string()))?;
+
+        // Check if client is registered
+        if !client.is_registered() {
+            let error_msg = NumericReply::not_registered();
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Validate parameters
+        if message.params.len() < 2 {
+            let error_msg = NumericReply::need_more_params("KILL");
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        let target_nick = &message.params[0];
+        let reason = &message.params[1];
+
+        // Get the operator user
+        let database = self.database.clone();
+        let Some(operator_user) = database.get_user(&client.id) else {
+            let error_msg = NumericReply::no_privileges();
+            let _ = client.send(error_msg);
+            return Ok(());
+        };
+
+        // Check if user is an operator
+        if !operator_user.is_operator {
+            let error_msg = NumericReply::no_privileges();
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Find the target user
+        let Some(target_user) = database.get_user_by_nick(target_nick) else {
+            let error_msg = NumericReply::no_such_nick(target_nick);
+            let _ = client.send(error_msg);
+            return Ok(());
+        };
+
+        // Check operator permissions
+        let can_kill_globally = operator_user.is_global_oper();
+        let can_kill_locally = operator_user.is_local_oper();
+        let target_is_local = target_user.server == self.config.server.name;
+
+        if !can_kill_globally && (!can_kill_locally || !target_is_local) {
+            let error_msg = NumericReply::no_privileges();
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Check if trying to kill a server (not allowed)
+        if target_user.nick == self.config.server.name {
+            let error_msg = NumericReply::cant_kill_server();
+            let _ = client.send(error_msg);
+            return Ok(());
+        }
+
+        // Send KILL message to the target user
+        let kill_message = Message::with_prefix(
+            operator_user.prefix(),
+            MessageType::Kill,
+            vec![target_nick.to_string(), reason.to_string()],
+        );
+
+        // Find the target user's client and send the kill message
+        if let Some(target_client_id) = database.get_user_by_nick(target_nick).map(|u| u.id) {
+            if let Some(target_client) = connection_handler.get_client(&target_client_id) {
+                let _ = target_client.send(kill_message);
+            }
+        }
+
+        // Send NOTICE to all operators about the kill
+        self.notify_operators_kill(&operator_user, &target_user, reason).await?;
+
+        // Disconnect the target user
+        if let Some(target_client_id) = database.get_user_by_nick(target_nick).map(|u| u.id) {
+            if let Some(target_client) = connection_handler.get_client(&target_client_id) {
+                // Send quit message to all users in channels
+                self.broadcast_user_quit(&target_client, &format!("Killed by {}: {}", operator_user.nick, reason)).await?;
+                
+                // Remove user from database
+                database.remove_user(target_client_id)?;
+                
+                // Close the connection
+                drop(connection_handler);
+                let mut connection_handler = self.connection_handler.write().await;
+                connection_handler.remove_client(&target_client_id);
+            }
+        }
+
+        tracing::info!("Operator {} killed user {}: {}", operator_user.nick, target_nick, reason);
+        Ok(())
+    }
+    
+    /// Notify all operators about a KILL command
+    async fn notify_operators_kill(&self, operator: &User, target: &User, reason: &str) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        let database = self.database.clone();
+        
+        // Get all operators
+        let operators = database.get_all_users()
+            .into_iter()
+            .filter(|user| user.is_operator)
+            .collect::<Vec<_>>();
+        
+        let notice_text = format!("*** {} killed {}: {}", operator.nick, target.nick, reason);
+        
+        for oper in operators {
+            if let Some(client_id) = database.get_user_by_nick(&oper.nick).map(|u| u.id) {
+                if let Some(client) = connection_handler.get_client(&client_id) {
+                    let notice = Message::new(
+                        MessageType::Notice,
+                        vec![oper.nick.clone(), notice_text.clone()],
+                    );
+                    let _ = client.send(notice);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Broadcast user quit to all users in the same channels
+    async fn broadcast_user_quit(&self, client: &Client, reason: &str) -> Result<()> {
+        let database = self.database.clone();
+        let Some(user) = client.get_user() else {
+            return Ok(());
+        };
+        
+        // Get all channels the user is in
+        let channels = user.channels.clone();
+        
+        // Create quit message
+        let quit_message = Message::with_prefix(
+            user.prefix(),
+            MessageType::Quit,
+            vec![reason.to_string()],
+        );
+        
+        // Broadcast to all users in the same channels
+        let connection_handler = self.connection_handler.read().await;
+        for channel in channels {
+            let channel_users = database.get_channel_users(&channel);
+            for nick in channel_users {
+                // Get user ID from nickname
+                if let Some(user) = database.get_user_by_nick(&nick) {
+                    if let Some(target_client) = connection_handler.get_client(&user.id) {
+                        let _ = target_client.send(quit_message.clone());
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
     /// Handle SQUIT command for operators
     async fn handle_operator_squit(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
         let connection_handler = self.connection_handler.read().await;
@@ -2600,7 +2769,7 @@ impl Server {
         
         for (action, mode_char) in mode_changes {
             if let Some(user_mode) = crate::user_modes::UserMode::from_char(mode_char) {
-                let adding = action == '+';
+                let adding = action;
                 
                 // Validate mode change
                 if let Err(_e) = self.validate_mode_change(
@@ -2665,7 +2834,7 @@ impl Server {
     }
     
     /// Handle channel mode changes (placeholder - delegate to channel module)
-    async fn handle_channel_mode(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+    async fn handle_channel_mode(&self, client_id: uuid::Uuid, _message: Message) -> Result<()> {
         // TODO: Implement channel mode handling
         // This should delegate to the channel module
         tracing::info!("Channel mode handling not yet implemented");
@@ -2701,34 +2870,34 @@ impl Server {
         target_user: &str,
         requesting_user: &str,
         requesting_user_is_operator: bool,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let is_self = target_user == requesting_user;
         
         // Special case: Operator mode can only be granted through OPER command
         if adding && mode.oper_only() {
-            return Err("Operator mode can only be granted through OPER command".to_string());
+            return Err("Operator mode can only be granted through OPER command".into());
         }
         
         // Check operator requirements for removal of restricted modes
         if !adding && mode.requires_operator() && !requesting_user_is_operator {
             // Exception: Users can always remove their own operator mode
             if !(is_self && (mode == crate::user_modes::UserMode::Operator || mode == crate::user_modes::UserMode::LocalOperator)) {
-                return Err("Permission denied".to_string());
+                return Err("Permission denied".into());
             }
         }
         
         // Check if mode can only be set by the user themselves
         if !is_self && mode.self_only() {
-            return Err("You can only change your own modes".to_string());
+            return Err("You can only change your own modes".into());
         }
         
         // Check if mode is already set/unset
         let currently_has = user.has_mode(mode.to_char());
         if adding && currently_has {
-            return Err(format!("Mode {} is already set", mode.to_char()));
+            return Err(format!("Mode {} is already set", mode.to_char()).into());
         }
         if !adding && !currently_has {
-            return Err(format!("Mode {} is not set", mode.to_char()));
+            return Err(format!("Mode {} is not set", mode.to_char()).into());
         }
         
         Ok(())
@@ -2770,8 +2939,8 @@ impl Server {
             let _ = client.send(NumericReply::luser_unknown(unknown_connections));
             let _ = client.send(NumericReply::luser_channels(channels));
             let _ = client.send(NumericReply::luser_me(local_users, servers));
-            let _ = client.send(NumericReply::local_users(local_users, max_local_users));
-            let _ = client.send(NumericReply::global_users(global_users, max_global_users));
+            let _ = client.send(NumericReply::local_users(local_users, max_local_users.try_into().unwrap_or(u32::MAX)));
+            let _ = client.send(NumericReply::global_users(global_users, max_global_users.try_into().unwrap_or(u32::MAX)));
         }
         Ok(())
     }
@@ -2790,12 +2959,12 @@ impl Server {
     
     /// Get channel count
     async fn get_channel_count(&self) -> u32 {
-        self.database.get_channel_count() as u32
+        self.database.channel_count() as u32
     }
     
     /// Get server count (including this server)
     async fn get_server_count(&self) -> u32 {
-        let server_connections = self.server_connections.get_connections().await;
+        let server_connections = self.server_connections.get_all_connections().await;
         1 + server_connections.len() as u32 // +1 for this server
     }
     

@@ -50,7 +50,9 @@ pub enum NumericReply {
     RplEndOfInfo = 374,
     RplMotdStart = 375,
     RplMotd = 372,
-    RplEndOfMotd = 376,
+    RplMotdEnd = 376,
+    // RplEndOfMotd = same as RplMotdEnd per RFC
+    // ERR_NOMOTD is an error, moved to error section
     RplYoureOper = 381,
     RplRehashing = 382,
     RplTime = 391,
@@ -82,11 +84,7 @@ pub enum NumericReply {
     RplStatsUptime = 242,
     RplStatsOLine = 243,
     RplStatsHLine = 244,
-    RplStatsM = 244, // Module-specific stats
-    RplMotdStart = 375,
-    RplMotd = 372,
-    RplMotdEnd = 376,
-    RplNoMotd = 422,
+    RplStatsM = 245, // Module-specific stats
     RplUmodeIs = 221,
     RplServList = 234,
     RplServListEnd = 235,
@@ -102,7 +100,11 @@ pub enum NumericReply {
     RplNowAway = 306,
     RplUserhost = 302,
     RplIson = 303,
-    
+
+    // Missing RFC-defined codes
+    RplTryAgain = 263,  // RFC 2812
+    RplListStart = 321, // Missing from RFC
+
     // Error replies
     ErrNoSuchNick = 401,
     ErrNoSuchServer = 402,
@@ -119,11 +121,11 @@ pub enum NumericReply {
     ErrWildTopLevel = 414,
     ErrBadMask = 415,
     ErrUnknownCommand = 421,
-    ErrNoMotd = 422,
+    ErrNoMotd = 422,  // ERR_NOMOTD per RFC
     ErrNoAdminInfo = 423,
     ErrFileError = 424,
     ErrNoNicknameGiven = 431,
-    ErrErroneousNickname = 432,
+    ErrErroneousNickname = 432,  // ERR_ERRONEUSNICKNAME for invalid chars per RFC
     ErrNicknameInUse = 433,
     ErrNickCollision = 436,
     ErrUnavailResource = 437,
@@ -136,8 +138,6 @@ pub enum NumericReply {
     ErrNotRegistered = 451,
     ErrNeedMoreParams = 461,
     ErrAlreadyRegistered = 462,
-    ErrUsersDontMatch = 502,
-    ErrCantSetOperatorMode = 503,
     ErrNoPermForHost = 463,
     ErrPasswordMismatch = 464,
     ErrYoureBannedCreep = 465,
@@ -158,6 +158,7 @@ pub enum NumericReply {
     ErrNoOperHost = 491,
     ErrUModeUnknownFlag = 501,
     ErrUsersDontMatch = 502,
+    ErrCantSetOperatorMode = 504,
     // Custom numeric replies
     Custom(u16),
 }
@@ -207,7 +208,8 @@ impl NumericReply {
             NumericReply::RplEndOfInfo => 374,
             NumericReply::RplMotdStart => 375,
             NumericReply::RplMotd => 372,
-            NumericReply::RplEndOfMotd => 376,
+            NumericReply::RplMotdEnd => 376,
+            NumericReply::ErrNoMotd => 422,
             NumericReply::RplYoureOper => 381,
             NumericReply::RplRehashing => 382,
             NumericReply::RplTime => 391,
@@ -245,6 +247,8 @@ impl NumericReply {
             NumericReply::RplIson => 303,
             NumericReply::RplUnaway => 305,
             NumericReply::RplNowAway => 306,
+            NumericReply::RplTryAgain => 263,
+            NumericReply::RplListStart => 321,
             NumericReply::ErrNoSuchNick => 401,
             NumericReply::ErrNoSuchServer => 402,
             NumericReply::ErrNoSuchChannel => 403,
@@ -260,7 +264,6 @@ impl NumericReply {
             NumericReply::ErrWildTopLevel => 414,
             NumericReply::ErrBadMask => 415,
             NumericReply::ErrUnknownCommand => 421,
-            NumericReply::ErrNoMotd => 422,
             NumericReply::ErrNoAdminInfo => 423,
             NumericReply::ErrFileError => 424,
             NumericReply::ErrNoNicknameGiven => 431,
@@ -301,11 +304,13 @@ impl NumericReply {
             NumericReply::RplStatsYLine => 218,
             NumericReply::RplStatsLLine => 241,
             NumericReply::RplStatsHLine => 244,
+            NumericReply::RplStatsM => 245,
             NumericReply::RplLocalUsers => 265,
             NumericReply::RplGlobalUsers => 266,
             NumericReply::ErrUniqOpPrivsNeeded => 485,
             NumericReply::ErrNoOperHost => 491,
             NumericReply::ErrUModeUnknownFlag => 501,
+            NumericReply::ErrCantSetOperatorMode => 504,
             NumericReply::Custom(code) => *code,
         }
     }
@@ -358,7 +363,8 @@ impl NumericReply {
                     NumericReply::RplEndOfInfo => 374,
                     NumericReply::RplMotdStart => 375,
                     NumericReply::RplMotd => 372,
-                    NumericReply::RplEndOfMotd => 376,
+                    NumericReply::RplMotdEnd => 376,
+                            NumericReply::ErrNoMotd => 422,
                     NumericReply::RplYoureOper => 381,
                     NumericReply::RplRehashing => 382,
                     NumericReply::RplTime => 391,
@@ -396,6 +402,8 @@ impl NumericReply {
                     NumericReply::RplIson => 303,
                     NumericReply::RplUnaway => 305,
                     NumericReply::RplNowAway => 306,
+                    NumericReply::RplTryAgain => 263,
+                    NumericReply::RplListStart => 321,
                     NumericReply::ErrNoSuchNick => 401,
                     NumericReply::ErrNoSuchServer => 402,
                     NumericReply::ErrNoSuchChannel => 403,
@@ -411,7 +419,6 @@ impl NumericReply {
                     NumericReply::ErrWildTopLevel => 414,
                     NumericReply::ErrBadMask => 415,
                     NumericReply::ErrUnknownCommand => 421,
-                    NumericReply::ErrNoMotd => 422,
                     NumericReply::ErrNoAdminInfo => 423,
                     NumericReply::ErrFileError => 424,
                     NumericReply::ErrNoNicknameGiven => 431,
@@ -448,6 +455,7 @@ impl NumericReply {
                     NumericReply::ErrNoOperHost => 491,
                     NumericReply::ErrUModeUnknownFlag => 501,
                     NumericReply::ErrUsersDontMatch => 502,
+                    NumericReply::ErrCantSetOperatorMode => 504,
                     NumericReply::RplStatsCLine => 213,
                     NumericReply::RplStatsNLine => 214,
                     NumericReply::RplStatsILine => 215,
@@ -455,6 +463,7 @@ impl NumericReply {
                     NumericReply::RplStatsYLine => 218,
                     NumericReply::RplStatsLLine => 241,
                     NumericReply::RplStatsHLine => 244,
+                    NumericReply::RplStatsM => 245,
                     NumericReply::RplLocalUsers => 265,
                     NumericReply::RplGlobalUsers => 266,
                     NumericReply::Custom(_) => unreachable!(), // Already handled above
@@ -798,7 +807,7 @@ impl NumericReply {
     }
     
     /// RPL_ENDOFMOTD (MOTD end)
-    pub fn motd_end(server: &str) -> Message {
+    pub fn motd_end(_server: &str) -> Message {
         Self::RplMotdEnd.reply(
             "*",
             vec![format!(":End of /MOTD command.")],
@@ -806,8 +815,8 @@ impl NumericReply {
     }
     
     /// ERR_NOMOTD (No MOTD file)
-    pub fn no_motd(server: &str) -> Message {
-        Self::RplNoMotd.reply(
+    pub fn no_motd(_server: &str) -> Message {
+        Self::ErrNoMotd.reply(
             "*",
             vec![format!(":MOTD file is missing")],
         )
@@ -1146,6 +1155,14 @@ impl NumericReply {
             Self::ErrNoPrivileges.reply(
                 "*",
                 vec!["Permission Denied- You're not an IRC operator".to_string()],
+            )
+        }
+
+        /// ERR_CANTKILLSERVER
+        pub fn cant_kill_server() -> Message {
+            Self::ErrCantKillServer.reply(
+                "*",
+                vec!["You can't kill a server!".to_string()],
             )
         }
 

@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+// Remove unused tracing import when not needed
 
 /// Statistics data for the server
 #[derive(Debug, Clone)]

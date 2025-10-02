@@ -1,6 +1,6 @@
 //! Throttling manager for connection rate limiting
 
-use crate::{Error, Result};
+use crate::Result;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ impl ThrottleEntry {
     }
 
     /// Add a connection attempt and check if throttling should be applied
-    fn add_connection(&mut self, config: &crate::config::ThrottlingConfig) -> bool {
+    fn add_connection(&mut self, config: &crate::config::ThrottlingConfig, ip: std::net::IpAddr) -> bool {
         let now = Instant::now();
         
         // Clean old connection times outside the time window
@@ -64,6 +64,7 @@ impl ThrottleEntry {
             
             warn!(
                 "IP {} throttled at stage {} for {} seconds ({} connections in {}s window)",
+                ip,
                 self.stage,
                 throttle_duration,
                 self.connection_times.len(),
@@ -126,7 +127,7 @@ impl ThrottlingManager {
         let mut throttle_map = self.throttle_map.write().await;
         let entry = throttle_map.entry(ip_addr).or_insert_with(ThrottleEntry::new);
         
-        let allowed = entry.add_connection(&self.config);
+        let allowed = entry.add_connection(&self.config, ip_addr);
         
         if !allowed {
             debug!(
@@ -164,7 +165,7 @@ impl ThrottlingManager {
             loop {
                 interval.tick().await;
                 
-                let now = Instant::now();
+                let _now = Instant::now();
                 let mut throttle_map = throttle_map.write().await;
                 let initial_count = throttle_map.len();
                 

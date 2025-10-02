@@ -90,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
     config.validate()?;
     
     // Create and initialize server
-    let mut server = Server::new(config);
+    let mut server = Server::new(config).await;
     server.init().await?;
     
     // Start server

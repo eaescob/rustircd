@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Super servers: {:?}", config.network.super_servers);
     
     // Create and initialize server
-    let mut server = Server::new(config);
+    let mut server = Server::new(config).await;
     server.init().await?;
     
     // Start server

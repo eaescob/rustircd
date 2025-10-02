@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::default();
     
     // Create server instance
-    let server = Server::new(config);
+    let server = Server::new(config).await;
     
     // Register IRCv3 extensions
     server.register_ircv3_extensions().await?;

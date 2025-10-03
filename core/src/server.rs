@@ -880,6 +880,12 @@ impl Server {
             MessageType::Userhost => {
                 self.handle_userhost(client_id, message).await?;
             }
+            MessageType::Lusers => {
+                self.handle_lusers(client_id, message).await?;
+            }
+            MessageType::Users => {
+                self.handle_users(client_id, message).await?;
+            }
             // Server connection commands
             MessageType::Connect => {
                 self.handle_connect(client_id, message).await?;
@@ -2978,6 +2984,36 @@ impl Server {
             let _ = client.send(NumericReply::luser_me(local_users, servers));
             let _ = client.send(NumericReply::local_users(local_users, max_local_users.try_into().unwrap_or(u32::MAX)));
             let _ = client.send(NumericReply::global_users(global_users, max_global_users.try_into().unwrap_or(u32::MAX)));
+        }
+        Ok(())
+    }
+    
+    /// Handle USERS command - RFC 1459 Section 4.3.3
+    pub async fn handle_users(&self, client_id: uuid::Uuid, _message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            // Get local and global user counts
+            let local_users = self.get_local_user_count().await;
+            let global_users = self.get_global_user_count().await;
+            
+            // Send USERS replies
+            let _ = client.send(NumericReply::users_start());
+            
+            if local_users > 0 {
+                // Show local users count
+                let _ = client.send(NumericReply::users("local", "users", &format!("{} users", local_users)));
+            }
+            
+            if global_users > 0 {
+                // Show global users count
+                let _ = client.send(NumericReply::users("global", "users", &format!("{} users", global_users)));
+            }
+            
+            if local_users == 0 && global_users == 0 {
+                let _ = client.send(NumericReply::no_users());
+            }
+            
+            let _ = client.send(NumericReply::end_of_users());
         }
         Ok(())
     }

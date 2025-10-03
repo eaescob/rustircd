@@ -1108,6 +1108,42 @@ impl NumericReply {
         )
     }
 
+    // USERS command replies
+    
+    /// RPL_USERSSTART
+    pub fn users_start() -> Message {
+        Self::RplUsersStart.reply(
+            "*",
+            vec!["UserID   Terminal  Host".to_string()],
+        )
+    }
+    
+    /// RPL_USERS
+    pub fn users(user_id: &str, terminal: &str, host: &str) -> Message {
+        Self::RplUsers.reply(
+            "*",
+            vec![
+                format!("{:<8} {:<8} {}", user_id, terminal, host),
+            ],
+        )
+    }
+    
+    /// RPL_ENDOFUSERS
+    pub fn end_of_users() -> Message {
+        Self::RplEndOfUsers.reply(
+            "*",
+            vec!["End of users".to_string()],
+        )
+    }
+    
+    /// RPL_NOUSERS
+    pub fn no_users() -> Message {
+        Self::RplNoUsers.reply(
+            "*",
+            vec!["Nobody logged in".to_string()],
+        )
+    }
+
     // User mode replies
     
     /// RPL_UMODEIS

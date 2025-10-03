@@ -63,6 +63,7 @@ pub enum MessageType {
     // Messaging
     PrivMsg,
     Notice,
+    Wallops,
     
     // User queries
     Who,
@@ -123,6 +124,7 @@ impl fmt::Display for MessageType {
             MessageType::Motd => "MOTD",
             MessageType::PrivMsg => "PRIVMSG",
             MessageType::Notice => "NOTICE",
+            MessageType::Wallops => "WALLOPS",
             MessageType::Who => "WHO",
             MessageType::Whois => "WHOIS",
             MessageType::Whowas => "WHOWAS",
@@ -176,6 +178,7 @@ impl From<&str> for MessageType {
             "MOTD" => MessageType::Motd,
             "PRIVMSG" => MessageType::PrivMsg,
             "NOTICE" => MessageType::Notice,
+            "WALLOPS" => MessageType::Wallops,
             "WHO" => MessageType::Who,
             "WHOIS" => MessageType::Whois,
             "WHOWAS" => MessageType::Whowas,

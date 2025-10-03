@@ -4,10 +4,12 @@
 
 pub mod channel;
 pub mod ircv3;
+pub mod messaging;
 pub mod optional;
 pub mod throttling;
 
 pub use channel::{ChannelModule, Channel, ChannelMember, ChannelMode};
 pub use ircv3::Ircv3Module;
+pub use messaging::{MessagingModule, MessagingManager, WallopsModule, MessagingWrapper, create_default_messaging_module};
 pub use optional::OptionalModule;
 pub use throttling::ThrottlingModule;

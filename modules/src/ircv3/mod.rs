@@ -167,4 +167,14 @@ impl Module for Ircv3Module {
     async fn handle_numeric_reply(&mut self, _numeric: u16, _params: Vec<String>) -> Result<()> {
         Ok(())
     }
+
+    async fn handle_stats_query(&mut self, _query: &str, _client_id: uuid::Uuid, _server: Option<&rustircd_core::Server>) -> Result<Vec<rustircd_core::module::ModuleStatsResponse>> {
+        // IRCv3 module doesn't provide STATS queries
+        Ok(vec![])
+    }
+
+    fn get_stats_queries(&self) -> Vec<String> {
+        // IRCv3 module doesn't provide STATS queries
+        vec![]
+    }
 }

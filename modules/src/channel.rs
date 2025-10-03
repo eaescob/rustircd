@@ -1,9 +1,9 @@
 //! Channel operations module
 
 use rustircd_core::{
-    Module, module::ModuleResult, Client, Message, User, Error, Result, 
-    MessageType, Prefix, BroadcastSystem, BroadcastTarget, BroadcastPriority, 
-    BroadcastMessage, Database, extensions::{BurstExtension, BurstType}
+    Module, module::ModuleResult, Client, Message, User, Error, Result,
+    MessageType, Prefix, BroadcastSystem, BroadcastTarget, BroadcastPriority,
+    BroadcastMessage, Database, extensions::{BurstExtension, BurstType}, ChannelInfo
 };
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
@@ -456,6 +456,16 @@ impl Module for ChannelModule {
         // Handle channel-specific numeric replies if needed
         tracing::debug!("Channel module handling numeric reply {}: {:?}", numeric, params);
         Ok(())
+    }
+
+    async fn handle_stats_query(&mut self, _query: &str, _client_id: Uuid, _server: Option<&rustircd_core::Server>) -> Result<Vec<rustircd_core::module::ModuleStatsResponse>> {
+        // Channel module doesn't provide STATS queries
+        Ok(vec![])
+    }
+
+    fn get_stats_queries(&self) -> Vec<String> {
+        // Channel module doesn't provide STATS queries
+        vec![]
     }
 }
 
@@ -1981,7 +1991,7 @@ impl BurstExtension for ChannelBurstExtension {
         Ok(messages)
     }
     
-    async fn on_receive_burst(&self, source_server: &str, burst_type: &BurstType, messages: &[Message]) -> Result<()> {
+    async fn on_receive_burst(&self, _source_server: &str, burst_type: &BurstType, messages: &[Message]) -> Result<()> {
         if !matches!(burst_type, BurstType::Channel) {
             return Ok(());
         }
@@ -1995,7 +2005,7 @@ impl BurstExtension for ChannelBurstExtension {
             
             let channel_name = &message.params[0];
             let channel_id_str = &message.params[1];
-            let channel_server = &message.params[2];
+            let _channel_server = &message.params[2];
             let created_at_str = &message.params[3];
             
             // Parse channel ID
@@ -2025,8 +2035,6 @@ impl BurstExtension for ChannelBurstExtension {
                 exception_masks: HashSet::new(),
                 invite_masks: HashSet::new(),
                 created_at,
-                last_activity: Utc::now(),
-                is_local: false, // This is a remote channel
             };
             
             // Parse additional parameters
@@ -2092,28 +2100,41 @@ impl BurstExtension for ChannelBurstExtension {
                 }
             }
             
+            // Also add to database for tracking
+            let channel_info = ChannelInfo {
+                name: channel_name.clone(),
+                topic: remote_channel.topic.clone(),
+                user_count: 0, // Will be updated when members join
+                modes: remote_channel.modes.iter().map(|m| *m as u8 as char).collect(),
+            };
+
             // Add remote channel to our channel list
             channels.insert(channel_name.clone(), remote_channel);
-            
-            // Also add to database for tracking
-            if let Some(channel_info) = self.database.get_channel(channel_name) {
-                // Update existing channel info
-                // Note: We don't update the database channel info with remote data
-                // as it might conflict with local state
-            } else {
-                // Add new channel info to database
-                let channel_info = crate::ChannelInfo {
-                    name: channel_name.clone(),
-                    topic: remote_channel.topic.clone(),
-                    member_count: 0, // Will be updated when members join
-                    created_at: remote_channel.created_at,
-                };
-                if let Err(e) = self.database.add_channel(channel_info) {
-                    tracing::warn!("Failed to add remote channel {} to database: {}", channel_name, e);
-                }
+            if let Err(e) = self.database.add_channel(channel_info) {
+                tracing::debug!("Channel {} may already exist in database: {}", channel_name, e);
             }
         }
-        
+
         Ok(())
+    }
+
+    async fn on_server_connect_burst(&self, target_server: &str) -> Result<Vec<Message>> {
+        // When a new server connects, send all our channels as part of the initial burst
+        self.on_prepare_burst(target_server, &BurstType::Channel).await
+    }
+
+    async fn on_server_disconnect_cleanup(&self, source_server: &str) -> Result<()> {
+        // When a server disconnects, we should clean up channels that only existed on that server
+        // For now, we'll just log it - full cleanup would require tracking which server owns which channel
+        tracing::info!("Server {} disconnected, channel cleanup may be needed", source_server);
+        Ok(())
+    }
+
+    fn get_supported_burst_types(&self) -> Vec<BurstType> {
+        vec![BurstType::Channel]
+    }
+
+    fn handles_burst_type(&self, burst_type: &BurstType) -> bool {
+        matches!(burst_type, BurstType::Channel)
     }
 }

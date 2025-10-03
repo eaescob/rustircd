@@ -114,6 +114,8 @@ pub enum OperatorFlag {
     Administrator,
     /// Spy (informed when someone does WHOIS on them)
     Spy,
+    /// Can use SQUIT command to disconnect servers
+    Squit,
 }
 
 /// Operator configuration
@@ -176,6 +178,11 @@ impl OperatorConfig {
     /// Check if operator has spy privileges
     pub fn is_spy(&self) -> bool {
         self.has_flag(OperatorFlag::Spy)
+    }
+    
+    /// Check if operator can use SQUIT command
+    pub fn can_squit(&self) -> bool {
+        self.has_flag(OperatorFlag::Squit)
     }
     
     /// Verify password

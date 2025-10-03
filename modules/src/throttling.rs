@@ -1,14 +1,14 @@
 //! Connection throttling module for rate limiting client connections
 
-use rustircd_core::{Module, module::{ModuleResult, ModuleStatsResponse}, Client, Message, User, Error, Result};
+use rustircd_core::{Module, module::{ModuleResult, ModuleStatsResponse}, Client, Message, User, Error, Result, Server};
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::time::interval;
-use tracing::{info, warn, debug, error};
+use tracing::{info, warn, debug};
 
 /// Throttling entry for tracking connection attempts from an IP
 #[derive(Debug, Clone)]
@@ -169,8 +169,8 @@ impl ThrottlingModule {
             
             loop {
                 interval.tick().await;
-                
-                let now = Instant::now();
+
+                let _now = Instant::now();
                 let mut throttle_map = throttle_map.write().await;
                 let initial_count = throttle_map.len();
                 
@@ -265,7 +265,7 @@ impl Module for ThrottlingModule {
         Ok(())
     }
     
-    async fn handle_stats_query(&mut self, query: &str, client_id: uuid::Uuid, server: Option<&crate::Server>) -> Result<Vec<ModuleStatsResponse>> {
+    async fn handle_stats_query(&mut self, query: &str, _client_id: uuid::Uuid, server: Option<&Server>) -> Result<Vec<ModuleStatsResponse>> {
         let mut responses = Vec::new();
         
         if query == "T" {
@@ -279,15 +279,9 @@ impl Module for ThrottlingModule {
                 ));
             } else {
                 // Check if the requesting user is an operator and if server details are allowed
-                let is_operator = if let Some(server) = server {
-                    let users = server.users.read().await;
-                    let requesting_user = users.get(&client_id);
-                    requesting_user.map(|u| u.is_operator).unwrap_or(false)
-                } else {
-                    false
-                };
-                
-                let show_details = is_operator && server.map(|s| s.config.server.show_server_details_in_stats).unwrap_or(false);
+                let is_operator = false; // TODO: Add method to check if user is operator
+
+                let show_details = is_operator && server.map(|s| s.config().server.show_server_details_in_stats).unwrap_or(false);
                 
                 if show_details {
                     // Show detailed information to operators (if configured)
@@ -330,7 +324,7 @@ pub fn extract_ip_from_socket_addr(addr: &std::net::SocketAddr) -> IpAddr {
 }
 
 /// Helper function to extract IP address from string representation
-pub fn parse_ip_from_string(addr_str: &str) -> Result<IpAddr, Error> {
+pub fn parse_ip_from_string(addr_str: &str) -> Result<IpAddr> {
     addr_str.parse::<IpAddr>()
         .map_err(|e| Error::Connection(format!("Invalid IP address '{}': {}", addr_str, e)))
 }

@@ -234,4 +234,9 @@ impl User {
     pub fn is_spy(&self) -> bool {
         self.has_operator_flag(OperatorFlag::Spy)
     }
+    
+    /// Check if user can use SQUIT command
+    pub fn can_squit(&self) -> bool {
+        self.has_operator_flag(OperatorFlag::Squit)
+    }
 }

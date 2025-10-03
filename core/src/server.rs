@@ -2388,6 +2388,32 @@ impl Server {
         Ok(())
     }
     
+    /// Send notice to all operators
+    async fn send_operator_notice(&self, message: &str) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        let database = self.database.clone();
+        
+        // Get all operators
+        let operators = database.get_all_users()
+            .into_iter()
+            .filter(|user| user.is_operator)
+            .collect::<Vec<_>>();
+        
+        for oper in operators {
+            if let Some(client_id) = database.get_user_by_nick(&oper.nick).map(|u| u.id) {
+                if let Some(client) = connection_handler.get_client(&client_id) {
+                    let notice = Message::new(
+                        MessageType::Notice,
+                        vec![oper.nick.clone(), message.to_string()],
+                    );
+                    let _ = client.send(notice);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
     /// Broadcast user quit to all users in the same channels
     async fn broadcast_user_quit(&self, client: &Client, reason: &str) -> Result<()> {
         let database = self.database.clone();
@@ -2453,6 +2479,14 @@ impl Server {
             return Ok(());
         }
 
+        // Check if operator has S flag (Squit permission)
+        if !user.can_squit() {
+            let error_msg = NumericReply::no_privileges();
+            let _ = client.send(error_msg);
+            tracing::warn!("Operator {} attempted SQUIT without S flag", user.nick);
+            return Ok(());
+        }
+
         // Check if target server is connected
         if !self.server_connections.is_connected(target_server).await {
             let error_msg = NumericReply::no_such_server(target_server);
@@ -2470,6 +2504,9 @@ impl Server {
         
         // Remove the server connection locally
         self.server_connections.remove_connection(target_server).await?;
+        
+        // Send notice to all operators about the SQUIT
+        self.send_operator_notice(&format!("SQUIT: {} disconnected server {}: {}", user.nick, target_server, reason)).await?;
         
         tracing::info!("Operator {} issued SQUIT for server {}: {}", user.nick, target_server, reason);
         Ok(())

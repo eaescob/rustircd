@@ -479,6 +479,21 @@ impl Server {
             MessageType::ChannelBurst => {
                 self.handle_channel_burst_received(server_name, message).await?;
             }
+            MessageType::Wallops => {
+                self.handle_server_wallops_received(server_name, message).await?;
+            }
+            MessageType::Kill => {
+                self.handle_server_kill_received(server_name, message).await?;
+            }
+            MessageType::Away => {
+                self.handle_server_away_received(server_name, message).await?;
+            }
+            MessageType::Join => {
+                self.handle_server_join_received(server_name, message).await?;
+            }
+            MessageType::Part => {
+                self.handle_server_part_received(server_name, message).await?;
+            }
             _ => {
                 // Other server commands can be handled here
                 tracing::debug!("Unhandled server command: {:?}", message.command);
@@ -654,6 +669,228 @@ impl Server {
         // Update last pong time for the server
         self.server_connections.update_connection_pong(server_name).await?;
         
+        Ok(())
+    }
+
+    /// Handle WALLOPS message received from another server
+    async fn handle_server_wallops_received(&self, server_name: &str, message: Message) -> Result<()> {
+        if message.params.is_empty() {
+            tracing::warn!("Received WALLOPS from server {} with no message", server_name);
+            return Ok(());
+        }
+        
+        // Get the wallops message (all parameters joined)
+        let wallops_message = message.params.join(" ");
+        
+        // Create the wallops message format with server prefix
+        let wallops_msg = format!(":{} WALLOPS :{}", server_name, wallops_message);
+        
+        // Send to all local clients with wallops mode (+w)
+        let connection_handler = self.connection_handler.read().await;
+        let mut local_sent_count = 0;
+        
+        for (_, user) in self.users.read().await.iter() {
+            if user.has_mode('w') {
+                // Find the user's client and send the message
+                if let Some(user_client) = connection_handler.get_client_by_nick(&user.nick) {
+                    if let Err(e) = user_client.send_raw(&wallops_msg) {
+                        tracing::warn!("Failed to send wallops to {}: {}", user.nick, e);
+                    } else {
+                        local_sent_count += 1;
+                    }
+                }
+            }
+        }
+        
+        // Forward to other servers (except the one we received it from)
+        let server_wallops_msg = Message::new(
+            MessageType::Wallops,
+            vec![wallops_message.clone()]
+        );
+        
+        // Get all server connections except the source
+        let connections = self.server_connections.get_all_connections().await;
+        for connection in connections {
+            if connection.info.name != server_name {
+                if let Err(e) = connection.send(server_wallops_msg.clone()) {
+                    tracing::warn!("Failed to forward wallops to server {}: {}", connection.info.name, e);
+                }
+            }
+        }
+        
+        tracing::info!(
+            "Wallops received from server {} and sent to {} local recipients: {}",
+            server_name,
+            local_sent_count,
+            wallops_message
+        );
+        
+        Ok(())
+    }
+
+    /// Handle KILL message received from another server
+    async fn handle_server_kill_received(&self, server_name: &str, message: Message) -> Result<()> {
+        if message.params.len() < 2 {
+            tracing::warn!("Received KILL from server {} with insufficient parameters", server_name);
+            return Ok(());
+        }
+        
+        let target_nick = &message.params[0];
+        let kill_reason = &message.params[1];
+        
+        // Find the target user
+        let database = self.database.clone();
+        let Some(target_user) = database.get_user_by_nick(target_nick) else {
+            tracing::warn!("Received KILL for unknown user {} from server {}", target_nick, server_name);
+            return Ok(());
+        };
+        
+        // Check if target is a server (not allowed)
+        if target_user.nick == self.config.server.name {
+            tracing::warn!("Received KILL for server {} from server {}", self.config.server.name, server_name);
+            return Ok(());
+        }
+        
+        // Find the target user's client
+        let target_client_id = if let Some(target_user) = database.get_user_by_nick(target_nick) {
+            Some(target_user.id)
+        } else {
+            None
+        };
+        
+        if let Some(client_id) = target_client_id {
+            // Send KILL message to the target user and handle disconnection
+            {
+                let connection_handler = self.connection_handler.read().await;
+                if let Some(target_client) = connection_handler.get_client(&client_id) {
+                    // Send KILL message to the target user
+                    let kill_message = Message::new(
+                        MessageType::Kill,
+                        vec![target_nick.to_string(), kill_reason.to_string()]
+                    );
+                    let _ = target_client.send(kill_message);
+                }
+            }
+            
+            // Send quit message to all users in channels
+            let quit_reason = format!("Killed ({})", kill_reason);
+            self.broadcast_user_quit_by_id(client_id, &quit_reason).await?;
+            
+            // Remove user from database
+            database.remove_user(client_id)?;
+            
+            // Close the connection
+            let mut connection_handler = self.connection_handler.write().await;
+            connection_handler.remove_client(&client_id);
+            
+            tracing::info!("Killed user {} from server {}: {}", target_nick, server_name, kill_reason);
+        }
+        
+        // Forward to other servers (except the one we received it from)
+        let server_kill_msg = Message::new(
+            MessageType::Kill,
+            vec![target_nick.to_string(), kill_reason.clone()]
+        );
+        
+        // Get all server connections except the source
+        let connections = self.server_connections.get_all_connections().await;
+        for connection in connections {
+            if connection.info.name != server_name {
+                if let Err(e) = connection.send(server_kill_msg.clone()) {
+                    tracing::warn!("Failed to forward KILL to server {}: {}", connection.info.name, e);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Handle AWAY message received from another server
+    async fn handle_server_away_received(&self, server_name: &str, message: Message) -> Result<()> {
+        // AWAY messages from servers don't have a source prefix in our current implementation
+        // This would need to be enhanced to extract the source user from the message prefix
+        // For now, we'll just forward the message to other servers
+        
+        // Forward to other servers (except the one we received it from)
+        let server_away_msg = Message::new(
+            MessageType::Away,
+            message.params.clone()
+        );
+        
+        // Get all server connections except the source
+        let connections = self.server_connections.get_all_connections().await;
+        for connection in connections {
+            if connection.info.name != server_name {
+                if let Err(e) = connection.send(server_away_msg.clone()) {
+                    tracing::warn!("Failed to forward AWAY to server {}: {}", connection.info.name, e);
+                }
+            }
+        }
+        
+        tracing::debug!("Forwarded AWAY message from server {}", server_name);
+        Ok(())
+    }
+
+    /// Handle JOIN message received from another server
+    async fn handle_server_join_received(&self, server_name: &str, message: Message) -> Result<()> {
+        if message.params.is_empty() {
+            tracing::warn!("Received JOIN from server {} with no channel", server_name);
+            return Ok(());
+        }
+        
+        let channel_name = &message.params[0];
+        
+        // Forward to other servers (except the one we received it from)
+        let server_join_msg = Message::new(
+            MessageType::Join,
+            vec![channel_name.clone()]
+        );
+        
+        // Get all server connections except the source
+        let connections = self.server_connections.get_all_connections().await;
+        for connection in connections {
+            if connection.info.name != server_name {
+                if let Err(e) = connection.send(server_join_msg.clone()) {
+                    tracing::warn!("Failed to forward JOIN to server {}: {}", connection.info.name, e);
+                }
+            }
+        }
+        
+        tracing::debug!("Forwarded JOIN message for channel {} from server {}", channel_name, server_name);
+        Ok(())
+    }
+
+    /// Handle PART message received from another server
+    async fn handle_server_part_received(&self, server_name: &str, message: Message) -> Result<()> {
+        if message.params.is_empty() {
+            tracing::warn!("Received PART from server {} with no channel", server_name);
+            return Ok(());
+        }
+        
+        let channel_name = &message.params[0];
+        let reason = message.params.get(1).cloned().unwrap_or_default();
+        
+        // Forward to other servers (except the one we received it from)
+        let server_part_msg = Message::new(
+            MessageType::Part,
+            if reason.is_empty() {
+                vec![channel_name.clone()]
+            } else {
+                vec![channel_name.clone(), reason.clone()]
+            }
+        );
+        
+        // Get all server connections except the source
+        let connections = self.server_connections.get_all_connections().await;
+        for connection in connections {
+            if connection.info.name != server_name {
+                if let Err(e) = connection.send(server_part_msg.clone()) {
+                    tracing::warn!("Failed to forward PART to server {}: {}", connection.info.name, e);
+                }
+            }
+        }
+        
+        tracing::debug!("Forwarded PART message for channel {} from server {}", channel_name, server_name);
         Ok(())
     }
     
@@ -870,9 +1107,18 @@ impl Server {
             MessageType::Notice => {
                 self.handle_notice(client_id, message).await?;
             }
+            MessageType::Wallops => {
+                self.handle_wallops(client_id, message).await?;
+            }
             // Miscellaneous commands
             MessageType::Away => {
                 self.handle_away(client_id, message).await?;
+            }
+            MessageType::Join => {
+                self.handle_join(client_id, message).await?;
+            }
+            MessageType::Part => {
+                self.handle_part(client_id, message).await?;
             }
             MessageType::Ison => {
                 self.handle_ison(client_id, message).await?;
@@ -1042,6 +1288,17 @@ impl Server {
             // Check if client is fully registered
             if client.has_nick() && client.has_user() {
                 client.set_state(ClientState::Registered);
+                
+                // Add user to database
+                let user = User::new(
+                    client.nickname().unwrap_or("unknown").to_string(),
+                    username.clone(),
+                    realname.clone(),
+                    hostname.clone(),
+                    servername.clone(),
+                );
+                self.database.add_user(user)?;
+                
                 // Send welcome message
                 let welcome_msg = NumericReply::welcome(
                     &self.config.server.name,
@@ -1056,6 +1313,27 @@ impl Server {
                 for motd_msg in motd_messages {
                     let _ = client.send(motd_msg);
                 }
+                
+                // Broadcast user registration to all connected servers
+                let nick = client.nickname().unwrap_or("unknown");
+                let server_user_msg = Message::new(
+                    MessageType::UserBurst,
+                    vec![
+                        nick.to_string(),
+                        username.clone(),
+                        hostname.clone(),
+                        realname.clone(),
+                        self.config.server.name.clone(),
+                        client_id.to_string(),
+                        chrono::Utc::now().to_rfc3339(),
+                    ]
+                );
+                
+                if let Err(e) = self.server_connections.broadcast_to_servers(server_user_msg).await {
+                    tracing::warn!("Failed to broadcast USER registration to servers: {}", e);
+                }
+                
+                tracing::info!("User {} registered and broadcasted to servers", nick);
             }
         }
         
@@ -1767,6 +2045,77 @@ impl Server {
         Ok(())
     }
     
+    /// Handle WALLOPS command
+    async fn handle_wallops(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            if !client.is_registered() {
+                let error_msg = NumericReply::not_registered();
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            
+            // Check if user is an operator
+            if let Some(user) = &client.user {
+                if !user.is_operator {
+                    let error_msg = NumericReply::no_privileges();
+                    let _ = client.send(error_msg);
+                    return Ok(());
+                }
+            } else {
+                let error_msg = NumericReply::not_registered();
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            
+            if message.params.is_empty() {
+                let error_msg = NumericReply::no_text_to_send();
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            
+            // Get the wallops message (all parameters joined)
+            let wallops_message = message.params.join(" ");
+            let sender_nick = client.nickname().unwrap_or("unknown");
+            
+            // Create the wallops message format
+            let wallops_msg = format!(":{} WALLOPS :{}", sender_nick, wallops_message);
+            
+            // Send to all local clients with wallops mode (+w)
+            let mut local_sent_count = 0;
+            for (_, user) in self.users.read().await.iter() {
+                if user.has_mode('w') {
+                    // Find the user's client and send the message
+                    if let Some(user_client) = connection_handler.get_client_by_nick(&user.nick) {
+                        if let Err(e) = user_client.send_raw(&wallops_msg) {
+                            tracing::warn!("Failed to send wallops to {}: {}", user.nick, e);
+                        } else {
+                            local_sent_count += 1;
+                        }
+                    }
+                }
+            }
+            
+            // Broadcast to all connected servers
+            let server_wallops_msg = Message::new(
+                MessageType::Wallops,
+                vec![wallops_message.clone()]
+            );
+            
+            if let Err(e) = self.server_connections.broadcast_to_servers(server_wallops_msg).await {
+                tracing::warn!("Failed to broadcast wallops to servers: {}", e);
+            }
+            
+            tracing::info!(
+                "Wallops sent by {} to {} local recipients and broadcast to servers: {}",
+                sender_nick,
+                local_sent_count,
+                wallops_message
+            );
+        }
+        Ok(())
+    }
+
     /// Handle NOTICE command
     async fn handle_notice(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
         let connection_handler = self.connection_handler.read().await;
@@ -1837,20 +2186,194 @@ impl Server {
                 if let Some(mut user) = self.database.get_user_by_nick(nick) {
                     if message.params.is_empty() {
                         // Remove away status
+                        let was_away = user.away_message.is_some();
                         user.away_message = None;
                         let _ = self.database.add_user(user);
                         
                         let unaway_msg = NumericReply::unaway();
                         let _ = client.send(unaway_msg);
+                        
+                        // Broadcast away removal to servers
+                        if was_away {
+                            let server_away_msg = Message::new(
+                                MessageType::Away,
+                                vec![]
+                            );
+                            
+                            if let Err(e) = self.server_connections.broadcast_to_servers(server_away_msg).await {
+                                tracing::warn!("Failed to broadcast AWAY removal to servers: {}", e);
+                            }
+                        }
                     } else {
                         // Set away message
                         let away_message = message.params[0].clone();
+                        let was_away = user.away_message.is_some();
                         user.away_message = Some(away_message.clone());
                         let _ = self.database.add_user(user);
                         
                         let now_away_msg = NumericReply::now_away();
                         let _ = client.send(now_away_msg);
+                        
+                        // Broadcast away status to servers
+                        if !was_away {
+                            let server_away_msg = Message::new(
+                                MessageType::Away,
+                                vec![away_message]
+                            );
+                            
+                            if let Err(e) = self.server_connections.broadcast_to_servers(server_away_msg).await {
+                                tracing::warn!("Failed to broadcast AWAY status to servers: {}", e);
+                            }
+                        }
                     }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle JOIN command
+    async fn handle_join(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            if !client.is_registered() {
+                let error_msg = NumericReply::not_registered();
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            
+            if message.params.is_empty() {
+                let error_msg = NumericReply::need_more_params("JOIN");
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            
+            // Get user from database
+            if let Some(nick) = client.nickname() {
+                if let Some(mut user) = self.database.get_user_by_nick(nick) {
+                    let channel_name = &message.params[0];
+                    
+                    // Add user to channel
+                    user.channels.insert(channel_name.clone());
+                    let _ = self.database.add_user(user);
+                    
+                    // Add channel to database if it doesn't exist
+                    let mut default_modes = std::collections::HashSet::new();
+                    default_modes.insert('n');
+                    default_modes.insert('t');
+                    
+                    let channel_info = crate::ChannelInfo {
+                        name: channel_name.clone(),
+                        topic: None,
+                        user_count: 1,
+                        modes: default_modes, // Default modes: no external messages, topic ops only
+                    };
+                    let _ = self.database.add_channel(channel_info);
+                    
+                    // Send JOIN message to all users in the channel
+                    let join_message = Message::with_prefix(
+                        Prefix::User {
+                            nick: nick.to_string(),
+                            user: client.username().unwrap_or("unknown").to_string(),
+                            host: client.hostname().unwrap_or("unknown").to_string(),
+                        },
+                        MessageType::Join,
+                        vec![channel_name.clone()]
+                    );
+                    
+                    // Broadcast to channel members
+                    let channel_users = self.database.get_channel_users(channel_name);
+                    for member_nick in channel_users {
+                        if let Some(member_user) = self.database.get_user_by_nick(&member_nick) {
+                            if let Some(member_client) = connection_handler.get_client(&member_user.id) {
+                                let _ = member_client.send(join_message.clone());
+                            }
+                        }
+                    }
+                    
+                    // Broadcast JOIN to all connected servers
+                    let server_join_msg = Message::new(
+                        MessageType::Join,
+                        vec![channel_name.clone()]
+                    );
+                    
+                    if let Err(e) = self.server_connections.broadcast_to_servers(server_join_msg).await {
+                        tracing::warn!("Failed to broadcast JOIN to servers: {}", e);
+                    }
+                    
+                    tracing::info!("User {} joined channel {}", nick, channel_name);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle PART command
+    async fn handle_part(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let connection_handler = self.connection_handler.read().await;
+        if let Some(client) = connection_handler.get_client(&client_id) {
+            if !client.is_registered() {
+                let error_msg = NumericReply::not_registered();
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            
+            if message.params.is_empty() {
+                let error_msg = NumericReply::need_more_params("PART");
+                let _ = client.send(error_msg);
+                return Ok(());
+            }
+            
+            // Get user from database
+            if let Some(nick) = client.nickname() {
+                if let Some(mut user) = self.database.get_user_by_nick(nick) {
+                    let channel_name = &message.params[0];
+                    let reason = message.params.get(1).cloned().unwrap_or_default();
+                    
+                    // Remove user from channel
+                    user.channels.retain(|ch| ch != channel_name);
+                    let _ = self.database.add_user(user);
+                    
+                    // Send PART message to all users in the channel
+                    let part_message = Message::with_prefix(
+                        Prefix::User {
+                            nick: nick.to_string(),
+                            user: client.username().unwrap_or("unknown").to_string(),
+                            host: client.hostname().unwrap_or("unknown").to_string(),
+                        },
+                        MessageType::Part,
+                        if reason.is_empty() {
+                            vec![channel_name.clone()]
+                        } else {
+                            vec![channel_name.clone(), reason.clone()]
+                        }
+                    );
+                    
+                    // Broadcast to channel members
+                    let channel_users = self.database.get_channel_users(channel_name);
+                    for member_nick in channel_users {
+                        if let Some(member_user) = self.database.get_user_by_nick(&member_nick) {
+                            if let Some(member_client) = connection_handler.get_client(&member_user.id) {
+                                let _ = member_client.send(part_message.clone());
+                            }
+                        }
+                    }
+                    
+                    // Broadcast PART to all connected servers
+                    let server_part_msg = Message::new(
+                        MessageType::Part,
+                        if reason.is_empty() {
+                            vec![channel_name.clone()]
+                        } else {
+                            vec![channel_name.clone(), reason.clone()]
+                        }
+                    );
+                    
+                    if let Err(e) = self.server_connections.broadcast_to_servers(server_part_msg).await {
+                        tracing::warn!("Failed to broadcast PART to servers: {}", e);
+                    }
+                    
+                    tracing::info!("User {} parted channel {}: {}", nick, channel_name, reason);
                 }
             }
         }
@@ -2346,6 +2869,17 @@ impl Server {
         // Send NOTICE to all operators about the kill
         self.notify_operators_kill(&operator_user, &target_user, reason).await?;
 
+        // Broadcast KILL message to all connected servers
+        let server_kill_msg = Message::new(
+            MessageType::Kill,
+            vec![target_nick.to_string(), format!("{}!{}!{}!{} ({})", 
+                self.config.server.name, operator_user.host, operator_user.username, operator_user.nick, reason)]
+        );
+        
+        if let Err(e) = self.server_connections.broadcast_to_servers(server_kill_msg).await {
+            tracing::warn!("Failed to broadcast KILL to servers: {}", e);
+        }
+
         // Disconnect the target user
         if let Some(target_client_id) = database.get_user_by_nick(target_nick).map(|u| u.id) {
             if let Some(target_client) = connection_handler.get_client(&target_client_id) {
@@ -2424,6 +2958,40 @@ impl Server {
     async fn broadcast_user_quit(&self, client: &Client, reason: &str) -> Result<()> {
         let database = self.database.clone();
         let Some(user) = client.get_user() else {
+            return Ok(());
+        };
+        
+        // Get all channels the user is in
+        let channels = user.channels.clone();
+        
+        // Create quit message
+        let quit_message = Message::with_prefix(
+            user.prefix(),
+            MessageType::Quit,
+            vec![reason.to_string()],
+        );
+        
+        // Broadcast to all users in the same channels
+        let connection_handler = self.connection_handler.read().await;
+        for channel in channels {
+            let channel_users = database.get_channel_users(&channel);
+            for nick in channel_users {
+                // Get user ID from nickname
+                if let Some(user) = database.get_user_by_nick(&nick) {
+                    if let Some(target_client) = connection_handler.get_client(&user.id) {
+                        let _ = target_client.send(quit_message.clone());
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Broadcast user quit message by client ID
+    async fn broadcast_user_quit_by_id(&self, client_id: uuid::Uuid, reason: &str) -> Result<()> {
+        let database = self.database.clone();
+        let Some(user) = database.get_user(&client_id) else {
             return Ok(());
         };
         

@@ -41,7 +41,7 @@ enable_ident = true
 enable_dns = true
 enable_reverse_dns = true
 
-[tls]
+[security.tls]
 enabled = false
 cert_file = ""
 key_file = ""

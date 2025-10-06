@@ -1,6 +1,6 @@
 //! Client connection management
 
-use crate::{Message, User, Error, Result};
+use crate::{Message, User, Error, NumericReply, Result};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -99,6 +99,17 @@ impl Client {
     pub fn send_raw(&self, message: &str) -> Result<()> {
         let msg = Message::parse(message)?;
         self.send(msg)
+    }
+    
+    /// Send a numeric reply to the client
+    pub fn send_numeric(&self, numeric: NumericReply, params: &[&str]) -> Result<()> {
+        let message = numeric.reply("*", params.iter().map(|s| s.to_string()).collect());
+        self.send(message)
+    }
+    
+    /// Get the client's unique identifier
+    pub fn id(&self) -> uuid::Uuid {
+        self.id
     }
     
     /// Check if client is registered

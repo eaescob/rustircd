@@ -1,6 +1,6 @@
 //! Module system for extensible IRC daemon
 
-use crate::{Client, Message, User, Result};
+use crate::{Client, Message, User, Result, ModuleNumericManager};
 use async_trait::async_trait;
 use std::collections::HashMap;
 
@@ -24,6 +24,12 @@ pub trait Module: Send + Sync {
     
     /// Handle a message from a client
     async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ModuleResult>;
+    
+    /// Handle a message from a client with server reference
+    async fn handle_message_with_server(&mut self, client: &Client, message: &Message, _server: Option<&crate::Server>) -> Result<ModuleResult> {
+        // Default implementation calls the original method
+        self.handle_message(client, message).await
+    }
     
     /// Handle a message from a server
     async fn handle_server_message(&mut self, server: &str, message: &Message) -> Result<ModuleResult>;
@@ -57,6 +63,9 @@ pub trait Module: Send + Sync {
     
     /// Get the STATS query letters this module handles
     fn get_stats_queries(&self) -> Vec<String>;
+    
+    /// Register module-specific numeric replies
+    fn register_numerics(&self, manager: &mut ModuleNumericManager) -> Result<()>;
 }
 
 /// Result of module message handling
@@ -145,6 +154,13 @@ impl ModuleManager {
         self.modules.get(name).map(|m| m.as_ref())
     }
     
+    /// Get all loaded modules
+    pub async fn get_modules(&self) -> Vec<(String, &dyn Module)> {
+        self.modules.iter()
+            .map(|(name, module)| (name.clone(), module.as_ref()))
+            .collect()
+    }
+    
     /// Get a mutable module by name
     /// Note: This method is commented out due to lifetime issues with trait objects
     /// Use handle_message or other methods that work with the modules directly
@@ -157,6 +173,26 @@ impl ModuleManager {
         for module_name in &self.message_handlers {
             if let Some(module) = self.modules.get_mut(module_name) {
                 match module.handle_message(client, message).await {
+                    Ok(ModuleResult::HandledStop) => return Ok(ModuleResult::HandledStop),
+                    Ok(ModuleResult::Rejected(reason)) => return Ok(ModuleResult::Rejected(reason)),
+                    Ok(ModuleResult::Handled) => return Ok(ModuleResult::Handled),
+                    Ok(ModuleResult::NotHandled) => continue,
+                    Err(e) => {
+                        tracing::error!("Error in module {}: {}", module_name, e);
+                        continue;
+                    }
+                }
+            }
+        }
+        
+        Ok(ModuleResult::NotHandled)
+    }
+    
+    /// Handle a message from a client with server reference
+    pub async fn handle_message_with_server(&mut self, client: &Client, message: &Message, server: Option<&crate::Server>) -> Result<ModuleResult> {
+        for module_name in &self.message_handlers {
+            if let Some(module) = self.modules.get_mut(module_name) {
+                match module.handle_message_with_server(client, message, server).await {
                     Ok(ModuleResult::HandledStop) => return Ok(ModuleResult::HandledStop),
                     Ok(ModuleResult::Rejected(reason)) => return Ok(ModuleResult::Rejected(reason)),
                     Ok(ModuleResult::Handled) => return Ok(ModuleResult::Handled),

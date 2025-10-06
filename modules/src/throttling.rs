@@ -227,6 +227,10 @@ impl Module for ThrottlingModule {
         info!("Cleaning up throttling module");
         Ok(())
     }
+
+    fn register_numerics(&self, _manager: &mut rustircd_core::ModuleNumericManager) -> Result<()> {
+        Ok(())
+    }
     
     async fn handle_message(&mut self, _client: &Client, _message: &Message) -> Result<ModuleResult> {
         // Throttling module doesn't handle specific messages

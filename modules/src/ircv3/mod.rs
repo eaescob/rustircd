@@ -97,7 +97,7 @@ impl Module for Ircv3Module {
     
     async fn cleanup(&mut self) -> Result<()> {
         tracing::info!("Cleaning up IRCv3 module");
-        
+
         // Cleanup all capabilities
         self.capability_negotiation.cleanup().await?;
         self.message_tags.cleanup().await?;
@@ -107,7 +107,11 @@ impl Module for Ircv3Module {
         self.bot_mode.cleanup().await?;
         self.channel_rename.cleanup().await?;
         self.user_properties.cleanup().await?;
-        
+
+        Ok(())
+    }
+
+    fn register_numerics(&self, _manager: &mut rustircd_core::ModuleNumericManager) -> Result<()> {
         Ok(())
     }
     

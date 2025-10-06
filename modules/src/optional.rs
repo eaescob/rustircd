@@ -43,6 +43,10 @@ impl Module for OptionalModule {
         tracing::info!("Cleaning up optional commands module");
         Ok(())
     }
+
+    fn register_numerics(&self, _manager: &mut rustircd_core::ModuleNumericManager) -> Result<()> {
+        Ok(())
+    }
     
     async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ModuleResult> {
         match &message.command {

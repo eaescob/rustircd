@@ -1,6 +1,6 @@
 //! Connection handling and management
 
-use crate::{Client, Message, Error, Result};
+use crate::{Client, Message, Error, Result, LookupService};
 use std::net::SocketAddr;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -45,6 +45,7 @@ impl ConnectionHandler {
         tls_acceptor: Option<TlsAcceptor>,
         is_client_connection: bool,
         is_server_connection: bool,
+        lookup_service: Option<&LookupService>,
     ) -> Result<()> {
         // Check throttling for client connections
         if is_client_connection && !is_server_connection {
@@ -55,6 +56,46 @@ impl ConnectionHandler {
         
         let local_addr = stream.local_addr()?;
         let client_id = Uuid::new_v4();
+        
+        // Perform DNS and ident lookups for client connections
+        let (hostname, ident_username) = if is_client_connection && !is_server_connection {
+            if let Some(lookup) = lookup_service {
+                // Perform DNS reverse lookup
+                let dns_result = lookup.reverse_dns_lookup(remote_addr.ip()).await;
+                let hostname = if dns_result.success {
+                    dns_result.hostname
+                } else {
+                    tracing::debug!("DNS lookup failed for {}: {:?}", remote_addr, dns_result.error);
+                    None
+                };
+                
+                // Perform ident lookup
+                let ident_result = lookup.ident_lookup(remote_addr, local_addr).await;
+                let ident_username = if ident_result.success {
+                    ident_result.username
+                } else {
+                    tracing::debug!("Ident lookup failed for {}: {:?}", remote_addr, ident_result.error);
+                    None
+                };
+                
+                (hostname, ident_username)
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+        
+        // Log connection with lookup results
+        if is_client_connection && !is_server_connection {
+            if let (Some(host), Some(user)) = (&hostname, &ident_username) {
+                tracing::info!("Client connection from {} ({}) with ident user: {}", remote_addr, host, user);
+            } else if let Some(host) = &hostname {
+                tracing::info!("Client connection from {} ({})", remote_addr, host);
+            } else {
+                tracing::info!("Client connection from {}", remote_addr);
+            }
+        }
         
         // Create message channel for this client
         let (client_sender, client_receiver) = mpsc::unbounded_channel();
@@ -113,7 +154,7 @@ impl ConnectionHandler {
         remote_addr: SocketAddr,
         tls_acceptor: Option<TlsAcceptor>,
     ) -> Result<()> {
-        self.handle_connection_with_type(stream, remote_addr, tls_acceptor, true, false).await
+        self.handle_connection_with_type(stream, remote_addr, tls_acceptor, true, false, None).await
     }
     
     /// Handle individual client connection

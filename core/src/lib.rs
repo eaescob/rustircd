@@ -24,6 +24,9 @@ pub mod burst_extensions;
 pub mod throttling_manager;
 pub mod statistics;
 pub mod motd;
+pub mod lookup;
+pub mod module_numerics;
+pub mod rehash;
 
 #[cfg(test)]
 mod tests;
@@ -48,6 +51,9 @@ pub use burst_extensions::{CoreUserBurstExtension, CoreServerBurstExtension};
 pub use throttling_manager::ThrottlingManager;
 pub use statistics::{StatisticsManager, ServerStatistics};
 pub use motd::MotdManager;
+pub use lookup::{LookupService, DnsResolver, IdentClient, LookupResult, IdentResult};
+pub use module_numerics::{ModuleNumericManager, ModuleNumeric, ModuleNumericClient};
+pub use rehash::RehashService;
 
 /// Re-exports for convenience
 pub use async_trait::async_trait;

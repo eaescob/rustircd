@@ -91,6 +91,26 @@ impl User {
         }
     }
     
+    /// Get user nickname
+    pub fn nickname(&self) -> &str {
+        &self.nick
+    }
+    
+    /// Get username
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+    
+    /// Get hostname
+    pub fn hostname(&self) -> &str {
+        &self.host
+    }
+    
+    /// Check if user is an operator
+    pub fn is_operator(&self) -> bool {
+        self.is_operator
+    }
+    
     /// Check if user has a specific mode
     pub fn has_mode(&self, mode: char) -> bool {
         self.modes.contains(&mode)

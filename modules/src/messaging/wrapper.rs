@@ -61,6 +61,10 @@ impl Module for MessagingWrapper {
         tracing::info!("Messaging module '{}' cleaned up", self.name);
         Ok(())
     }
+
+    fn register_numerics(&self, _manager: &mut rustircd_core::ModuleNumericManager) -> Result<()> {
+        Ok(())
+    }
     
     async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ModuleResult> {
         // Get all connected clients for messaging modules that need to broadcast

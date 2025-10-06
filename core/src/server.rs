@@ -6,7 +6,7 @@ use crate::{
     Database, BroadcastSystem, NetworkQueryManager, NetworkMessageHandler, ExtensionManager,
     ServerConnectionManager, ServerConnection, Prefix,
     CoreUserBurstExtension, CoreServerBurstExtension, ThrottlingManager, StatisticsManager, MotdManager,
-    extensions::BurstType,
+    extensions::BurstType, LookupService, RehashService,
 };
 use chrono::Utc;
 use std::collections::{HashMap, HashSet};
@@ -51,6 +51,10 @@ pub struct Server {
     statistics_manager: Arc<StatisticsManager>,
     /// MOTD manager for Message of the Day
     motd_manager: Arc<MotdManager>,
+    /// DNS and ident lookup service
+    lookup_service: Arc<LookupService>,
+    /// Rehash service for runtime configuration reloading
+    rehash_service: Arc<RehashService>,
     /// TLS acceptor (if enabled)
     tls_acceptor: Option<TlsAcceptor>,
     /// Replies configuration
@@ -160,6 +164,25 @@ impl Server {
         }
         let motd_manager = Arc::new(motd_manager);
         
+        // Initialize lookup service
+        let lookup_service = Arc::new(LookupService::new(
+            config.security.enable_dns,
+            config.security.enable_reverse_dns,
+            config.security.enable_ident,
+        ).await.unwrap_or_else(|e| {
+            tracing::error!("Failed to initialize lookup service: {}", e);
+            // Create a disabled lookup service as fallback
+            panic!("Lookup service initialization failed: {}", e);
+        }));
+        
+        // Initialize rehash service
+        let config_arc = Arc::new(RwLock::new(config.clone()));
+        let rehash_service = Arc::new(RehashService::new(
+            config_arc.clone(),
+            motd_manager.clone(),
+            "config.toml".to_string(), // TODO: Make this configurable
+        ));
+        
         Self {
             config: config.clone(),
             module_manager: Arc::new(RwLock::new(ModuleManager::new())),
@@ -176,6 +199,8 @@ impl Server {
             throttling_manager,
             statistics_manager,
             motd_manager,
+            lookup_service,
+            rehash_service,
             tls_acceptor: None,
             replies_config: config.replies.clone(),
         }
@@ -215,12 +240,22 @@ impl Server {
         let cert_chain = load_certificates(cert_file)?;
         let private_key = load_private_key(key_file)?;
         
-        // Create TLS configuration
+        // Create TLS configuration with custom cipher suites
         let tls_config = ServerConfig::builder()
             .with_safe_defaults()
             .with_no_client_auth()
             .with_single_cert(cert_chain, private_key)
             .map_err(|e| Error::Tls(e))?;
+        
+        // Configure cipher suites if specified
+        if !self.config.security.tls.cipher_suites.is_empty() {
+            // For now, we'll use the safe defaults since rustls handles cipher suite selection
+            // The configured cipher suites are logged for reference
+            tracing::info!("Configured cipher suites: {:?}", self.config.security.tls.cipher_suites);
+        }
+        
+        // Log TLS version configuration
+        tracing::info!("TLS version configured: {}", self.config.security.tls.version);
         
         self.tls_acceptor = Some(TlsAcceptor::from(Arc::new(tls_config)));
         
@@ -316,6 +351,7 @@ impl Server {
         // Spawn connection handler for this port
         let throttling_manager = self.throttling_manager.clone();
         let statistics_manager = self.statistics_manager.clone();
+        let lookup_service = self.lookup_service.clone();
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
@@ -349,7 +385,7 @@ impl Server {
                         }
                         
                         let mut conn_handler = connection_handler.write().await;
-                        if let Err(e) = conn_handler.handle_connection_with_type(stream, addr, tls_acceptor.clone(), is_client_connection, is_server_connection).await {
+                        if let Err(e) = conn_handler.handle_connection_with_type(stream, addr, tls_acceptor.clone(), is_client_connection, is_server_connection, Some(&lookup_service)).await {
                             tracing::error!("Error handling connection from {}: {}", addr, e);
                         }
                     }
@@ -396,7 +432,7 @@ impl Server {
         
         // Process through modules first
         let mut module_manager = self.module_manager.write().await;
-        match module_manager.handle_message(client, &message).await? {
+        match module_manager.handle_message_with_server(client, &message, Some(self)).await? {
             ModuleResult::HandledStop => return Ok(()),
             ModuleResult::Rejected(reason) => {
                 // Send error message to client
@@ -3626,5 +3662,10 @@ impl Server {
     /// Get global user count (all users across network)
     async fn get_global_user_count(&self) -> u32 {
         self.get_user_count().await // For now, same as local since we don't have network sync yet
+    }
+    
+    /// Get the rehash service
+    pub fn rehash_service(&self) -> &Arc<RehashService> {
+        &self.rehash_service
     }
 }

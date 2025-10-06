@@ -26,6 +26,8 @@ chrono = { version = "0.4", features = ["serde"] }
 regex = "1.10"
 rustc-hash = "1.1"
 sha2 = "0.10"
+trust-dns-resolver = "0.23"
+tokio-util = "0.7"
 
 [dev-dependencies]
 tokio-test = "0.4"

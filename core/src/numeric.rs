@@ -159,6 +159,45 @@ pub enum NumericReply {
     ErrUModeUnknownFlag = 501,
     ErrUsersDontMatch = 502,
     ErrCantSetOperatorMode = 504,
+    
+    // Additional numeric replies for modules
+    RplHelpStart = 704,
+    RplHelpTxt = 705,
+    RplEndOfHelp = 706,
+    RplLocops = 707,
+    RplTestMask = 708,
+    RplTestLine = 709,
+    RplService = 710,
+    RplModules = 711,
+    RplEndOfServices = 712,
+    RplKnock = 713,
+    RplGline = 714,
+    RplEndOfGlines = 715,
+    RplKline = 716,
+    RplEndOfKlines = 717,
+    RplDline = 718,
+    RplEndOfDlines = 719,
+    RplXline = 720,
+    RplEndOfXlines = 721,
+    RplAdminWall = 722,
+    RplEndOfLocops = 723,
+    RplSettings = 724,
+    RplSetting = 725,
+    RplEndOfSettings = 726,
+
+    // Additional error replies for modules
+    ErrHelpNotFound = 524,
+    ErrNoSuchGline = 525,
+    ErrNoSuchKline = 526,
+    ErrNoSuchDline = 527,
+    ErrNoSuchXline = 528,
+    ErrInvalidDuration = 529,
+    ErrInvalidValue = 530,
+    ErrNoSuchSetting = 531,
+    ErrTooManyServices = 532,
+    ErrInvalidName = 533,
+    ErrDisabled = 534,
+
     // Custom numeric replies
     Custom(u16),
 }
@@ -311,6 +350,40 @@ impl NumericReply {
             NumericReply::ErrNoOperHost => 491,
             NumericReply::ErrUModeUnknownFlag => 501,
             NumericReply::ErrCantSetOperatorMode => 504,
+            NumericReply::RplHelpStart => 704,
+            NumericReply::RplHelpTxt => 705,
+            NumericReply::RplEndOfHelp => 706,
+            NumericReply::RplLocops => 707,
+            NumericReply::RplTestMask => 708,
+            NumericReply::RplTestLine => 709,
+            NumericReply::RplService => 710,
+            NumericReply::RplModules => 711,
+            NumericReply::RplEndOfServices => 712,
+            NumericReply::RplKnock => 713,
+            NumericReply::RplGline => 714,
+            NumericReply::RplEndOfGlines => 715,
+            NumericReply::RplKline => 716,
+            NumericReply::RplEndOfKlines => 717,
+            NumericReply::RplDline => 718,
+            NumericReply::RplEndOfDlines => 719,
+            NumericReply::RplXline => 720,
+            NumericReply::RplEndOfXlines => 721,
+            NumericReply::RplAdminWall => 722,
+            NumericReply::RplEndOfLocops => 723,
+            NumericReply::RplSettings => 724,
+            NumericReply::RplSetting => 725,
+            NumericReply::RplEndOfSettings => 726,
+            NumericReply::ErrHelpNotFound => 524,
+            NumericReply::ErrNoSuchGline => 525,
+            NumericReply::ErrNoSuchKline => 526,
+            NumericReply::ErrNoSuchDline => 527,
+            NumericReply::ErrNoSuchXline => 528,
+            NumericReply::ErrInvalidDuration => 529,
+            NumericReply::ErrInvalidValue => 530,
+            NumericReply::ErrNoSuchSetting => 531,
+            NumericReply::ErrTooManyServices => 532,
+            NumericReply::ErrInvalidName => 533,
+            NumericReply::ErrDisabled => 534,
             NumericReply::Custom(code) => *code,
         }
     }
@@ -466,6 +539,40 @@ impl NumericReply {
                     NumericReply::RplStatsM => 245,
                     NumericReply::RplLocalUsers => 265,
                     NumericReply::RplGlobalUsers => 266,
+                    NumericReply::RplHelpStart => 704,
+                    NumericReply::RplHelpTxt => 705,
+                    NumericReply::RplEndOfHelp => 706,
+                    NumericReply::RplLocops => 707,
+                    NumericReply::RplTestMask => 708,
+                    NumericReply::RplTestLine => 709,
+                    NumericReply::RplService => 710,
+                    NumericReply::RplModules => 711,
+                    NumericReply::RplEndOfServices => 712,
+                    NumericReply::RplKnock => 713,
+                    NumericReply::RplGline => 714,
+                    NumericReply::RplEndOfGlines => 715,
+                    NumericReply::RplKline => 716,
+                    NumericReply::RplEndOfKlines => 717,
+                    NumericReply::RplDline => 718,
+                    NumericReply::RplEndOfDlines => 719,
+                    NumericReply::RplXline => 720,
+                    NumericReply::RplEndOfXlines => 721,
+                    NumericReply::RplAdminWall => 722,
+                    NumericReply::RplEndOfLocops => 723,
+                    NumericReply::RplSettings => 724,
+                    NumericReply::RplSetting => 725,
+                    NumericReply::RplEndOfSettings => 726,
+                    NumericReply::ErrHelpNotFound => 524,
+                    NumericReply::ErrNoSuchGline => 525,
+                    NumericReply::ErrNoSuchKline => 526,
+                    NumericReply::ErrNoSuchDline => 527,
+                    NumericReply::ErrNoSuchXline => 528,
+                    NumericReply::ErrInvalidDuration => 529,
+                    NumericReply::ErrInvalidValue => 530,
+                    NumericReply::ErrNoSuchSetting => 531,
+                    NumericReply::ErrTooManyServices => 532,
+                    NumericReply::ErrInvalidName => 533,
+                    NumericReply::ErrDisabled => 534,
                     NumericReply::Custom(_) => unreachable!(), // Already handled above
                 };
                 format!("{:03}", code)
@@ -1207,6 +1314,72 @@ impl NumericReply {
             Self::RplYoureOper.reply(
                 "*",
                 vec!["You are now an IRC operator".to_string()],
+            )
+        }
+
+        // Additional helper methods for modules
+        
+        /// RPL_HELPSTART
+        pub fn help_start(command: &str, description: &str) -> Message {
+            Self::RplHelpStart.reply(
+                "*",
+                vec![command.to_string(), description.to_string()],
+            )
+        }
+
+        /// RPL_HELPTXT
+        pub fn help_txt(command: &str, text: &str) -> Message {
+            Self::RplHelpTxt.reply(
+                "*",
+                vec![command.to_string(), text.to_string()],
+            )
+        }
+
+        /// RPL_ENDOFHELP
+        pub fn end_of_help(command: &str, text: &str) -> Message {
+            Self::RplEndOfHelp.reply(
+                "*",
+                vec![command.to_string(), text.to_string()],
+            )
+        }
+
+        /// RPL_LOCops
+        pub fn locops(text: &str) -> Message {
+            Self::RplLocops.reply(
+                "*",
+                vec![text.to_string()],
+            )
+        }
+
+        /// RPL_TESTMASK
+        pub fn test_mask(mask: &str, test_string: &str, result: &str) -> Message {
+            Self::RplTestMask.reply(
+                "*",
+                vec![mask.to_string(), test_string.to_string(), result.to_string()],
+            )
+        }
+
+        /// RPL_TESTLINE
+        pub fn test_line(line: &str, status: &str, message: &str) -> Message {
+            Self::RplTestLine.reply(
+                "*",
+                vec![line.to_string(), status.to_string(), message.to_string()],
+            )
+        }
+
+        /// RPL_SERVICE
+        pub fn service(service_name: &str, text: &str) -> Message {
+            Self::RplService.reply(
+                "*",
+                vec![service_name.to_string(), text.to_string()],
+            )
+        }
+
+        /// RPL_MODULES
+        pub fn modules(text: &str) -> Message {
+            Self::RplModules.reply(
+                "*",
+                vec![text.to_string()],
             )
         }
 

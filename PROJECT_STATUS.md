@@ -15,6 +15,13 @@
 ## ✅ **Completed Features**
 
 ### Recent Updates (January 2025)
+- ✅ **IRCv3 Extended Join & Multi-Prefix**: Complete implementation of Extended Join and Multi-Prefix IRCv3 capabilities
+- ✅ **Extended Join Module**: JOIN messages include account name and real name when capability is enabled
+- ✅ **Multi-Prefix Module**: NAMES command shows multiple prefixes for users with multiple channel modes
+- ✅ **Capability Negotiation**: Enhanced capability negotiation with automatic enabling/disabling
+- ✅ **Thread-Safe Implementation**: Arc<Mutex<>> for thread-safe capability management
+- ✅ **Comprehensive Examples**: Complete examples demonstrating both capabilities
+- ✅ **Documentation Updates**: README updated with detailed IRCv3 capability information
 - ✅ **Separate Ban Modules**: Split ban management into focused modules (GLINE, KLINE, DLINE, XLINE) with independent configuration
 - ✅ **Module Refactoring**: Replaced monolithic ban_management module with specialized ban modules for better maintainability
 - ✅ **Enhanced Help Integration**: Each ban module implements HelpProvider trait for comprehensive /help command support
@@ -118,7 +125,7 @@
 - [x] Error handling and logging infrastructure
 - [x] Async/await throughout with tokio
 
-### IRCv3 Integration (95%)
+### IRCv3 Integration (100%)
 - [x] Extension framework with clean hooks into core
 - [x] UserExtension, MessageExtension, CapabilityExtension, MessageTagExtension traits
 - [x] ExtensionManager coordination system
@@ -130,6 +137,8 @@
 - [x] Echo message capability
 - [x] Batch processing framework
 - [x] User properties tracking
+- [x] Extended Join capability with account name and real name support
+- [x] Multi-Prefix capability with enhanced NAMES command formatting
 
 ### Database & Broadcasting (100%)
 - [x] In-memory database with DashMap for performance
@@ -308,7 +317,24 @@
 - [x] **Documentation**: Comprehensive guide and examples
 - [x] **Cross-Server Consistency**: Maintains consistent channel state across network
 
-### Enhanced Module System (100%)
+### ✅ **IRCv3 Extended Join & Multi-Prefix (100%)**
+- [x] **Extended Join Module**: Complete implementation of IRCv3 Extended Join capability
+- [x] **Account Name Support**: JOIN messages include account name when capability is enabled
+- [x] **Real Name Support**: JOIN messages include real name when capability is enabled
+- [x] **Capability Negotiation**: Automatic enabling/disabling based on client capability requests
+- [x] **Message Format**: Proper IRCv3.2 compliant JOIN message format with account and real name
+- [x] **Fallback Support**: Graceful fallback to standard JOIN format when capability is disabled
+- [x] **Multi-Prefix Module**: Complete implementation of IRCv3 Multi-Prefix capability
+- [x] **Multiple Prefixes**: NAMES command shows multiple prefixes for users with multiple channel modes
+- [x] **Prefix Priority**: Proper prefix ordering (~ founder, & admin, @ operator, % half-op, + voice)
+- [x] **Enhanced NAMES**: NAMES command enhanced with multi-prefix support when capability is enabled
+- [x] **Thread-Safe Implementation**: Arc<Mutex<>> for thread-safe capability management
+- [x] **Async/Await Support**: Full async/await support throughout the implementation
+- [x] **Comprehensive Examples**: Complete examples demonstrating both capabilities
+- [x] **Documentation**: README updated with detailed IRCv3 capability information
+- [x] **IRCv3 Compliance**: Full compliance with IRCv3.2 Extended Join and Multi-Prefix specifications
+
+### ✅ **Enhanced Module System (100%)**
 - [x] **11 Production Modules**: Complete implementation of comprehensive module system based on Ratbox IRCd
 - [x] **HELP Module**: Dynamic command discovery with HelpProvider trait and module attribution
 - [x] **MONITOR Module**: User notification system with rate limiting and cleanup
@@ -443,7 +469,7 @@
 1. ✅ Implement server-to-server broadcasting (COMPLETED)
 2. ✅ Add TLS support for secure connections (COMPLETED)
 3. ✅ Implement DNS and ident lookup functionality (COMPLETED)
-4. Complete remaining IRCv3 capabilities (extended-join, multi-prefix)
+4. ✅ Complete remaining IRCv3 capabilities (extended-join, multi-prefix) (COMPLETED)
 5. Add SASL authentication support
 6. Implement medium-priority miscellaneous commands (REHASH, OPERWALL)
 
@@ -466,9 +492,9 @@
 
 ### Clean Separation
 - **Core**: 4,200 lines - networking, parsing, complete IRC commands, operator system, configurable replies, enhanced STATS system, statistics tracking
-- **Modules**: 4,500+ lines - channels (1,879 lines), IRCv3, optional features, throttling module (416 lines), 11 production modules (2,500+ lines), separate ban modules (1,000+ lines)
+- **Modules**: 4,800+ lines - channels (1,879 lines), IRCv3 with Extended Join & Multi-Prefix (500+ lines), optional features, throttling module (416 lines), 11 production modules (2,500+ lines), separate ban modules (1,000+ lines)
 - **Services**: 300 lines - framework for network services
-- **Examples**: 1,500+ lines - usage demonstrations, configurable replies examples, STATS system examples, throttling examples, help system examples, separate ban modules examples
+- **Examples**: 1,600+ lines - usage demonstrations, configurable replies examples, STATS system examples, throttling examples, help system examples, separate ban modules examples, IRCv3 capability examples
 
 ### Extension System
 - Trait-based hooks into core functionality
@@ -629,7 +655,7 @@ The RustIRCd project has also reached major milestones with the completion of th
 - **User Queries**: WHO, WHOIS, WHOWAS, AWAY, ISON, USERHOST
 - **Server Queries**: ADMIN, VERSION, STATS (enhanced), LINKS, TIME, INFO, TRACE
 - **Channel Operations**: JOIN, PART, MODE, TOPIC, NAMES, LIST, INVITE, KICK
-- **IRCv3**: CAP, AUTHENTICATE, message tags, capability negotiation
+- **IRCv3**: CAP, AUTHENTICATE, message tags, capability negotiation, extended-join, multi-prefix
 - **Security**: OPER, CONNECT, KILL with operator flags and throttling protection
 - **Staff Communication**: WALLOPS with modular messaging framework
 - **User Statistics**: USERS with local and global user count reporting

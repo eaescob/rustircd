@@ -442,6 +442,29 @@ pub struct ServicesConfig {
     pub enabled_services: Vec<String>,
     /// Service-specific settings
     pub service_settings: HashMap<String, serde_json::Value>,
+    /// Service definitions
+    pub services: Vec<ServiceDefinition>,
+}
+
+/// Service definition for configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceDefinition {
+    /// Service name (server name)
+    pub name: String,
+    /// Service type (matches implementation in services folder)
+    pub service_type: String,
+    /// Service hostname
+    pub hostname: String,
+    /// Service port
+    pub port: u16,
+    /// Service password
+    pub password: String,
+    /// Whether to use TLS
+    pub tls: bool,
+    /// Service-specific configuration
+    pub config: HashMap<String, serde_json::Value>,
+    /// Whether this service is enabled
+    pub enabled: bool,
 }
 
 impl Default for DatabaseConfig {
@@ -629,6 +652,7 @@ impl Default for ServicesConfig {
             services_directory: "services".to_string(),
             enabled_services: Vec::new(),
             service_settings: HashMap::new(),
+            services: Vec::new(),
         }
     }
 }
@@ -942,5 +966,27 @@ impl Config {
         } else {
             false
         }
+    }
+
+    /// Get service definition by name
+    pub fn get_service(&self, name: &str) -> Option<&ServiceDefinition> {
+        self.services.services.iter().find(|service| service.name == name && service.enabled)
+    }
+
+    /// Get service definition by type
+    pub fn get_services_by_type(&self, service_type: &str) -> Vec<&ServiceDefinition> {
+        self.services.services.iter()
+            .filter(|service| service.service_type == service_type && service.enabled)
+            .collect()
+    }
+
+    /// Check if a service is enabled
+    pub fn is_service_enabled(&self, name: &str) -> bool {
+        self.services.services.iter().any(|service| service.name == name && service.enabled)
+    }
+
+    /// Get all enabled services
+    pub fn get_enabled_services(&self) -> Vec<&ServiceDefinition> {
+        self.services.services.iter().filter(|service| service.enabled).collect()
     }
 }

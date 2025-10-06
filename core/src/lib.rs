@@ -20,6 +20,7 @@ pub mod database;
 pub mod broadcast;
 pub mod network;
 pub mod extensions;
+pub mod extension_registry;
 pub mod burst_extensions;
 pub mod throttling_manager;
 pub mod statistics;
@@ -47,6 +48,8 @@ pub use database::{Database, DatabaseConfig, UserHistoryEntry, ServerInfo as Dat
 pub use broadcast::{BroadcastSystem, BroadcastTarget, BroadcastMessage, BroadcastPriority, MessageBuilder};
 pub use network::{NetworkQueryManager, NetworkMessageHandler, NetworkQuery, NetworkResponse, NetworkMessage};
 pub use extensions::{ExtensionManager, UserExtension, MessageExtension, CapabilityExtension, MessageTagExtension, CapabilityAction, CapabilityResult, BurstExtension, BurstType};
+pub use extensions::{CoreExtensionManager, IdentifyMessageExtension, AccountTrackingExtension, ServerTimeExtension, BatchExtension, AccountInfo, BatchInfo, IpCloakExtension, IpCloakConfig, IpCloakStats, IpCloakConfigBuilder};
+pub use extension_registry::{ExtensionRegistry, ExtensionRegistryManager, RegisteredExtension, ExtensionType, ExtensionMetadata, ExtensionRegistrationBuilder, ExtensionStatistics};
 pub use burst_extensions::{CoreUserBurstExtension, CoreServerBurstExtension};
 pub use throttling_manager::ThrottlingManager;
 pub use statistics::{StatisticsManager, ServerStatistics};

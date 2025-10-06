@@ -118,11 +118,31 @@ impl User {
     
     /// Add a mode to the user
     pub fn add_mode(&mut self, mode: char) {
+        // Prevent clients from setting operator mode directly
+        if mode == 'o' {
+            tracing::warn!("Attempted to set operator mode 'o' directly - this should only be done through OPER command");
+            return;
+        }
         self.modes.insert(mode);
     }
     
     /// Remove a mode from the user
     pub fn remove_mode(&mut self, mode: char) {
+        // Prevent clients from removing operator mode directly
+        if mode == 'o' {
+            tracing::warn!("Attempted to remove operator mode 'o' directly - this should only be done through proper deop");
+            return;
+        }
+        self.modes.remove(&mode);
+    }
+    
+    /// Add a mode to the user (internal use only - bypasses security checks)
+    pub fn add_mode_internal(&mut self, mode: char) {
+        self.modes.insert(mode);
+    }
+    
+    /// Remove a mode from the user (internal use only - bypasses security checks)
+    pub fn remove_mode_internal(&mut self, mode: char) {
         self.modes.remove(&mode);
     }
     
@@ -214,10 +234,31 @@ impl User {
         }
     }
 
-    /// Set operator flags
+    /// Set operator flags (internal use only - requires proper authentication)
     pub fn set_operator_flags(&mut self, flags: HashSet<OperatorFlag>) {
         self.is_operator = !flags.is_empty();
         self.operator_flags = flags;
+        
+        // Set or remove operator mode based on flags
+        if self.is_operator {
+            self.add_mode_internal('o');
+        } else {
+            self.remove_mode_internal('o');
+        }
+    }
+    
+    /// Grant operator privileges (internal use only - requires proper authentication)
+    pub fn grant_operator_privileges(&mut self, flags: HashSet<OperatorFlag>) {
+        self.set_operator_flags(flags);
+        tracing::info!("Granted operator privileges to user {} with flags: {:?}", self.nick, self.operator_flags);
+    }
+    
+    /// Revoke operator privileges (internal use only)
+    pub fn revoke_operator_privileges(&mut self) {
+        self.is_operator = false;
+        self.operator_flags.clear();
+        self.remove_mode_internal('o');
+        tracing::info!("Revoked operator privileges from user {}", self.nick);
     }
     
     /// Check if user has a specific operator flag

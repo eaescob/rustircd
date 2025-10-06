@@ -213,9 +213,11 @@ RustIRCD includes 11 production-ready modules:
 - **Required**: Yes, for channel functionality
 
 #### IRCv3 Module
-- **Capabilities**: message-tags, server-time, bot-mode, away-notify, account-tag
-- **Features**: Capability negotiation, message tags, account tracking
+- **Capabilities**: message-tags, server-time, bot-mode, away-notify, account-tag, extended-join, multi-prefix
+- **Features**: Capability negotiation, message tags, account tracking, enhanced JOIN/NAMES commands
 - **Integration**: Clean extension system with core hooks
+- **Extended Join**: JOIN messages include account name and real name when capability is enabled
+- **Multi-Prefix**: NAMES command shows multiple prefixes for users with multiple channel modes
 
 #### Optional Commands Module
 - **Commands**: AWAY, REHASH, SUMMON, ISON, OPERWALL, WALLOPS, USERHOST, USERS
@@ -555,6 +557,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     Ok(())
 }
+```
+
+### IRCv3 Extended Join and Multi-Prefix
+```rust
+use rustircd_modules::ircv3::Ircv3Module;
+use rustircd_core::{Client, Message, Result};
+
+// Enable IRCv3 capabilities
+let mut ircv3_module = Ircv3Module::new();
+ircv3_module.init().await?;
+
+// Enable extended-join for a client
+ircv3_module.enable_extended_join(client.id);
+
+// Create extended JOIN message with account name and real name
+let extended_join = ircv3_module.create_extended_join_message(
+    &client,
+    "#test",
+    Some("alice"),
+    Some("Alice User"),
+)?;
+// Result: :testuser!testuser@localhost JOIN #test alice :Alice User
+
+// Enable multi-prefix for a client
+ircv3_module.enable_multi_prefix(client.id);
+
+// Process channel members with multiple prefixes
+let members = vec![
+    (user_id, modes_with_operator_and_voice),
+    (user_id, modes_with_halfop),
+    (user_id, modes_with_voice_only),
+];
+
+let formatted_names = ircv3_module.process_channel_members(
+    &client,
+    &members,
+    &|user_id| Some(format!("user{}", user_id.as_u128() % 1000)),
+);
+// Result: ["@+user1", "%user2", "+user3"] with multi-prefix
+// Result: ["@user1", "%user2", "+user3"] without multi-prefix
 ```
 
 ### Custom Module

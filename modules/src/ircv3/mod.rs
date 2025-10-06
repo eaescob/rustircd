@@ -9,10 +9,14 @@ pub mod bot_mode;
 pub mod channel_rename;
 pub mod user_properties;
 pub mod core_integration;
+pub mod extended_join;
+pub mod multi_prefix;
 
-use rustircd_core::{Module, module::ModuleResult, Client, Message, User, Result};
+use rustircd_core::{Module, module::ModuleResult, Client, Message, User, Result, Error};
 use async_trait::async_trait;
 use std::collections::HashSet;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// IRCv3 support module
 pub struct Ircv3Module {
@@ -28,6 +32,8 @@ pub struct Ircv3Module {
     bot_mode: bot_mode::BotMode,
     channel_rename: channel_rename::ChannelRename,
     user_properties: user_properties::UserProperties,
+    extended_join: Arc<Mutex<extended_join::ExtendedJoin>>,
+    multi_prefix: Arc<Mutex<multi_prefix::MultiPrefix>>,
 }
 
 impl Ircv3Module {
@@ -61,6 +67,8 @@ impl Ircv3Module {
             bot_mode: bot_mode::BotMode::new(),
             channel_rename: channel_rename::ChannelRename::new(),
             user_properties: user_properties::UserProperties::new(),
+            extended_join: Arc::new(Mutex::new(extended_join::ExtendedJoin::new())),
+            multi_prefix: Arc::new(Mutex::new(multi_prefix::MultiPrefix::new())),
         }
     }
 }
@@ -82,6 +90,55 @@ impl Module for Ircv3Module {
     async fn init(&mut self) -> Result<()> {
         tracing::info!("Initializing IRCv3 module");
         
+        // Set up capability callbacks
+        let extended_join = Arc::clone(&self.extended_join);
+        let multi_prefix = Arc::clone(&self.multi_prefix);
+        
+        self.capability_negotiation.set_on_capabilities_enabled(move |client_id, capabilities| {
+            let extended_join = extended_join.clone();
+            let multi_prefix = multi_prefix.clone();
+            let capabilities = capabilities.to_vec();
+            tokio::spawn(async move {
+                for cap in capabilities {
+                    match cap.as_str() {
+                        "extended-join" => {
+                            let mut ej = extended_join.lock().await;
+                            ej.enable_for_client(client_id);
+                        }
+                        "multi-prefix" => {
+                            let mut mp = multi_prefix.lock().await;
+                            mp.enable_for_client(client_id);
+                        }
+                        _ => {}
+                    }
+                }
+            });
+        });
+        
+        let extended_join = Arc::clone(&self.extended_join);
+        let multi_prefix = Arc::clone(&self.multi_prefix);
+        
+        self.capability_negotiation.set_on_capabilities_disabled(move |client_id, capabilities| {
+            let extended_join = extended_join.clone();
+            let multi_prefix = multi_prefix.clone();
+            let capabilities = capabilities.to_vec();
+            tokio::spawn(async move {
+                for cap in capabilities {
+                    match cap.as_str() {
+                        "extended-join" => {
+                            let mut ej = extended_join.lock().await;
+                            ej.disable_for_client(client_id);
+                        }
+                        "multi-prefix" => {
+                            let mut mp = multi_prefix.lock().await;
+                            mp.disable_for_client(client_id);
+                        }
+                        _ => {}
+                    }
+                }
+            });
+        });
+        
         // Initialize all capabilities
         self.capability_negotiation.init().await?;
         self.message_tags.init().await?;
@@ -91,6 +148,14 @@ impl Module for Ircv3Module {
         self.bot_mode.init().await?;
         self.channel_rename.init().await?;
         self.user_properties.init().await?;
+        {
+            let mut ej = self.extended_join.lock().await;
+            ej.init().await?;
+        }
+        {
+            let mut mp = self.multi_prefix.lock().await;
+            mp.init().await?;
+        }
         
         Ok(())
     }
@@ -107,6 +172,14 @@ impl Module for Ircv3Module {
         self.bot_mode.cleanup().await?;
         self.channel_rename.cleanup().await?;
         self.user_properties.cleanup().await?;
+        {
+            let mut ej = self.extended_join.lock().await;
+            ej.cleanup().await?;
+        }
+        {
+            let mut mp = self.multi_prefix.lock().await;
+            mp.cleanup().await?;
+        }
 
         Ok(())
     }
@@ -180,5 +253,117 @@ impl Module for Ircv3Module {
     fn get_stats_queries(&self) -> Vec<String> {
         // IRCv3 module doesn't provide STATS queries
         vec![]
+    }
+}
+
+impl Ircv3Module {
+    /// Enable extended join for a client
+    pub async fn enable_extended_join(&mut self, client_id: uuid::Uuid) {
+        let mut ej = self.extended_join.lock().await;
+        ej.enable_for_client(client_id);
+    }
+    
+    /// Disable extended join for a client
+    pub async fn disable_extended_join(&mut self, client_id: uuid::Uuid) {
+        let mut ej = self.extended_join.lock().await;
+        ej.disable_for_client(client_id);
+    }
+    
+    /// Check if extended join is enabled for a client
+    pub async fn is_extended_join_enabled(&self, client_id: &uuid::Uuid) -> bool {
+        let ej = self.extended_join.lock().await;
+        ej.is_enabled_for_client(client_id)
+    }
+    
+    /// Create an extended JOIN message
+    pub async fn create_extended_join_message(
+        &self,
+        client: &Client,
+        channel: &str,
+        account_name: Option<&str>,
+        real_name: Option<&str>,
+    ) -> Result<Message> {
+        let ej = self.extended_join.lock().await;
+        ej.create_extended_join_message(client, channel, account_name, real_name)
+    }
+    
+    /// Create a standard JOIN message
+    pub async fn create_standard_join_message(
+        &self,
+        client: &Client,
+        channel: &str,
+    ) -> Result<Message> {
+        let ej = self.extended_join.lock().await;
+        ej.create_standard_join_message(client, channel)
+    }
+    
+    /// Handle JOIN command with extended join support
+    pub async fn handle_join(
+        &self,
+        client: &Client,
+        channel: &str,
+        account_name: Option<&str>,
+        real_name: Option<&str>,
+    ) -> Result<Message> {
+        let ej = self.extended_join.lock().await;
+        ej.handle_join(client, channel, account_name, real_name).await
+    }
+    
+    /// Enable multi-prefix for a client
+    pub async fn enable_multi_prefix(&mut self, client_id: uuid::Uuid) {
+        let mut mp = self.multi_prefix.lock().await;
+        mp.enable_for_client(client_id);
+    }
+    
+    /// Disable multi-prefix for a client
+    pub async fn disable_multi_prefix(&mut self, client_id: uuid::Uuid) {
+        let mut mp = self.multi_prefix.lock().await;
+        mp.disable_for_client(client_id);
+    }
+    
+    /// Check if multi-prefix is enabled for a client
+    pub async fn is_multi_prefix_enabled(&self, client_id: &uuid::Uuid) -> bool {
+        let mp = self.multi_prefix.lock().await;
+        mp.is_enabled_for_client(client_id)
+    }
+    
+    /// Create a NAMES reply with multiple prefixes
+    pub async fn create_names_reply(
+        &self,
+        client: &Client,
+        channel: &str,
+        names: &[String],
+    ) -> Result<Message> {
+        let mp = self.multi_prefix.lock().await;
+        mp.create_names_reply(client, channel, names)
+    }
+    
+    /// Create an end of NAMES reply
+    pub async fn create_end_of_names_reply(&self, channel: &str) -> Result<Message> {
+        let mp = self.multi_prefix.lock().await;
+        mp.create_end_of_names_reply(channel)
+    }
+    
+    /// Process channel members and format their names based on capability
+    pub async fn process_channel_members(
+        &self,
+        client: &Client,
+        members: &[(uuid::Uuid, std::collections::HashSet<char>)],
+        user_database: &dyn Fn(&uuid::Uuid) -> Option<String>,
+    ) -> Vec<String> {
+        let mp = self.multi_prefix.lock().await;
+        mp.process_channel_members(client, members, user_database)
+    }
+    
+    /// Get account name from user data
+    pub async fn get_account_name(&self, client: &Client) -> Option<String> {
+        let ej = self.extended_join.lock().await;
+        ej.get_account_name(client)
+    }
+    
+    /// Get real name from user data
+    pub async fn get_real_name(&self, client: &Client) -> Option<String> {
+        let ej = self.extended_join.lock().await;
+        ej.get_real_name(client)
     }
 }

@@ -9,6 +9,10 @@ pub struct CapabilityNegotiation {
     capabilities: HashSet<String>,
     /// Client capabilities being negotiated
     client_capabilities: std::collections::HashMap<uuid::Uuid, HashSet<String>>,
+    /// Callback for when capabilities are enabled
+    on_capabilities_enabled: Option<Box<dyn Fn(uuid::Uuid, &[String]) + Send + Sync>>,
+    /// Callback for when capabilities are disabled
+    on_capabilities_disabled: Option<Box<dyn Fn(uuid::Uuid, &[String]) + Send + Sync>>,
 }
 
 impl CapabilityNegotiation {
@@ -32,6 +36,8 @@ impl CapabilityNegotiation {
         Self {
             capabilities,
             client_capabilities: std::collections::HashMap::new(),
+            on_capabilities_enabled: None,
+            on_capabilities_disabled: None,
         }
     }
     
@@ -157,5 +163,66 @@ impl CapabilityNegotiation {
     
     fn get_available_capabilities(&self) -> Vec<String> {
         self.capabilities.iter().cloned().collect()
+    }
+    
+    /// Set callback for when capabilities are enabled
+    pub fn set_on_capabilities_enabled<F>(&mut self, callback: F)
+    where
+        F: Fn(uuid::Uuid, &[String]) + Send + Sync + 'static,
+    {
+        self.on_capabilities_enabled = Some(Box::new(callback));
+    }
+    
+    /// Set callback for when capabilities are disabled
+    pub fn set_on_capabilities_disabled<F>(&mut self, callback: F)
+    where
+        F: Fn(uuid::Uuid, &[String]) + Send + Sync + 'static,
+    {
+        self.on_capabilities_disabled = Some(Box::new(callback));
+    }
+    
+    /// Enable capabilities for a client
+    pub fn enable_capabilities(&mut self, client_id: uuid::Uuid, capabilities: &[String]) {
+        let client_caps = self.client_capabilities.entry(client_id).or_insert_with(HashSet::new);
+        for cap in capabilities {
+            client_caps.insert(cap.clone());
+        }
+        
+        if let Some(ref callback) = self.on_capabilities_enabled {
+            callback(client_id, capabilities);
+        }
+        
+        tracing::info!("Enabled capabilities for client {}: {:?}", client_id, capabilities);
+    }
+    
+    /// Disable capabilities for a client
+    pub fn disable_capabilities(&mut self, client_id: uuid::Uuid, capabilities: &[String]) {
+        if let Some(client_caps) = self.client_capabilities.get_mut(&client_id) {
+            for cap in capabilities {
+                client_caps.remove(cap);
+            }
+        }
+        
+        if let Some(ref callback) = self.on_capabilities_disabled {
+            callback(client_id, capabilities);
+        }
+        
+        tracing::info!("Disabled capabilities for client {}: {:?}", client_id, capabilities);
+    }
+    
+    /// Check if a client has a specific capability enabled
+    pub fn client_has_capability(&self, client_id: &uuid::Uuid, capability: &str) -> bool {
+        self.client_capabilities
+            .get(client_id)
+            .map(|caps| caps.contains(capability))
+            .unwrap_or(false)
+    }
+    
+    /// Get all enabled capabilities for a client
+    pub fn get_client_capabilities(&self, client_id: &uuid::Uuid) -> Vec<String> {
+        self.client_capabilities
+            .get(client_id)
+            .map(|caps| caps.iter().cloned().collect())
+            .unwrap_or_default()
     }
 }

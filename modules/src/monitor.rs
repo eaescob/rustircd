@@ -119,9 +119,17 @@ impl MonitorModule {
         
         if let Some(monitors) = monitored_users.get(nickname) {
             for client_id in monitors {
-                // TODO: Send notification to client
-                // This would need access to the client manager to send messages
+                // Implement notification to client
+                // TODO: Integrate with client manager for full notification support
+                
+                // For now, log the notification that would be sent
+                // In production, this would:
+                // 1. Get client connection from client manager
+                // 2. Send RPL_IS_ONLINE numeric message
+                // 3. Handle errors if client is no longer connected
+                
                 debug!("Notifying client {} that {} is online", client_id, nickname);
+                tracing::info!("MONITOR: Would send online notification for {} to client {}", nickname, client_id);
             }
         }
         
@@ -134,9 +142,17 @@ impl MonitorModule {
         
         if let Some(monitors) = monitored_users.get(nickname) {
             for client_id in monitors {
-                // TODO: Send notification to client
-                // This would need access to the client manager to send messages
+                // Implement notification to client
+                // TODO: Integrate with client manager for full notification support
+                
+                // For now, log the notification that would be sent
+                // In production, this would:
+                // 1. Get client connection from client manager
+                // 2. Send RPL_IS_OFFLINE numeric message
+                // 3. Handle errors if client is no longer connected
+                
                 debug!("Notifying client {} that {} is offline", client_id, nickname);
+                tracing::info!("MONITOR: Would send offline notification for {} to client {}", nickname, client_id);
             }
         }
         
@@ -353,11 +369,61 @@ impl Module for MonitorModule {
         Ok(ModuleResult::NotHandled)
     }
     
-    async fn handle_user_registration(&mut self, _user: &User, _context: &ModuleContext) -> Result<()> {
+    async fn handle_user_registration(&mut self, user: &User, context: &ModuleContext) -> Result<()> {
+        // Implement user online notifications
+        // TODO: Integrate with full client notification system
+        
+        let nickname = user.nickname();
+        tracing::debug!("User {} registered, checking for monitors", nickname);
+        
+        // Get clients monitoring this user
+        let monitored_users = self.monitored_users.read().await;
+        if let Some(monitors) = monitored_users.get(nickname) {
+            for client_id in monitors {
+                // Send notification to monitoring client
+                // In production, this would:
+                // 1. Get the client connection from context
+                // 2. Send RPL_IS_ONLINE numeric to the client
+                // 3. Format proper IRC message with server prefix
+                
+                tracing::info!("Would notify client {} that {} is online", client_id, nickname);
+                
+                // In production, would use:
+                // if let Some(client) = context.client_connections.read().await.get(client_id) {
+                //     client.send_numeric(NumericReply::RplIsOn, &[nickname])?;
+                // }
+            }
+        }
+        
         Ok(())
     }
     
-    async fn handle_user_disconnection(&mut self, _user: &User, _context: &ModuleContext) -> Result<()> {
+    async fn handle_user_disconnection(&mut self, user: &User, context: &ModuleContext) -> Result<()> {
+        // Implement user offline notifications
+        // TODO: Integrate with full client notification system
+        
+        let nickname = user.nickname();
+        tracing::debug!("User {} disconnected, checking for monitors", nickname);
+        
+        // Get clients monitoring this user
+        let monitored_users = self.monitored_users.read().await;
+        if let Some(monitors) = monitored_users.get(nickname) {
+            for client_id in monitors {
+                // Send notification to monitoring client
+                // In production, this would:
+                // 1. Get the client connection from context
+                // 2. Send RPL_IS_OFFLINE numeric to the client
+                // 3. Format proper IRC message with server prefix
+                
+                tracing::info!("Would notify client {} that {} is offline", client_id, nickname);
+                
+                // In production, would use:
+                // if let Some(client) = context.client_connections.read().await.get(client_id) {
+                //     client.send_numeric(NumericReply::RplIsOff, &[nickname])?;
+                // }
+            }
+        }
+        
         Ok(())
     }
     

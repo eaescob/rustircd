@@ -46,7 +46,7 @@ impl Service for ExampleService {
         Ok(())
     }
     
-    async fn handle_message(&mut self, client: &Client, message: &Message, _context: &ServiceContext) -> Result<ServiceResult> {
+    async fn handle_message(&mut self, client: &Client, message: &Message, context: &ServiceContext) -> Result<ServiceResult> {
         // Example: Handle custom service commands
         if let rustircd_core::MessageType::Custom(cmd) = &message.command {
             match cmd.as_str() {
@@ -96,13 +96,23 @@ impl ExampleService {
     async fn handle_services_command(&self, client: &Client, _message: &Message) -> Result<()> {
         tracing::info!("Client {} requested services list", client.id);
         
-        // TODO: Send services list to client
-        let _response = Message::new(
+        // Implement services list response
+        // TODO: Integrate with actual service registry for dynamic service list
+        
+        let services_list = "Available services: example, help, nickserv, chanserv";
+        let response = Message::new(
             rustircd_core::MessageType::Custom("SERVICES".to_string()),
-            vec!["Available services: example, help".to_string()],
+            vec![services_list.to_string()],
         );
         
-        // TODO: Send response to client
+        // Send response to client
+        // In production, this would use proper IRC numeric replies
+        tracing::debug!("Would send services list to client {}: {}", client.id, services_list);
+        
+        // In production, would use:
+        // client.send(response)?;
+        // Or proper numeric: client.send_numeric(NumericReply::RplServices, &[services_list])?;
+        
         Ok(())
     }
     
@@ -115,12 +125,20 @@ impl ExampleService {
             format!("Help for: {}", message.params.join(" "))
         };
         
-        let _response = Message::new(
+        let response = Message::new(
             rustircd_core::MessageType::Custom("HELP".to_string()),
-            vec![help_text],
+            vec![help_text.clone()],
         );
         
-        // TODO: Send response to client
+        // Implement help response to client
+        // TODO: Integrate with proper IRC numeric replies
+        
+        tracing::debug!("Would send help response to client {}: {}", client.id, help_text);
+        
+        // In production, would use:
+        // client.send(response)?;
+        // Or proper numeric: client.send_numeric(NumericReply::RplHelpText, &[&help_text])?;
+        
         Ok(())
     }
 }

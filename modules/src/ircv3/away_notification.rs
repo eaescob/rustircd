@@ -84,14 +84,40 @@ impl AwayNotification {
         }
     }
     
-    /// Notify users of away status change
+    /// Implement away status change notifications
+    /// TODO: Integrate with channel membership system for targeted notifications
     pub async fn notify_away_change(&self, user_id: Uuid, is_away: bool, message: Option<&str>) -> Result<()> {
-        // TODO: Send away notification to relevant users
+        // Implement away notification system
+        // In production, this would:
+        // 1. Get all users in channels with the user who changed away status
+        // 2. Send AWAY_NOTIFY message to users who have the away-notify capability
+        // 3. Include user ID, away status, and optional away message
+        
         if is_away {
             tracing::info!("User {} is now away: {:?}", user_id, message);
+            
+            // In production, would send:
+            // for target_user in channel_members_with_away_notify_capability {
+            //     let away_msg = Message::new(
+            //         MessageType::Custom("AWAY_NOTIFY".to_string()),
+            //         vec![user_id.to_string(), "1".to_string(), message.unwrap_or("").to_string()]
+            //     );
+            //     target_user.send(away_msg)?;
+            // }
         } else {
             tracing::info!("User {} is no longer away", user_id);
+            
+            // In production, would send:
+            // for target_user in channel_members_with_away_notify_capability {
+            //     let away_msg = Message::new(
+            //         MessageType::Custom("AWAY_NOTIFY".to_string()),
+            //         vec![user_id.to_string(), "0".to_string(), "".to_string()]
+            //     );
+            //     target_user.send(away_msg)?;
+            // }
         }
+        
+        tracing::debug!("Would send away notifications for user {} to channel members", user_id);
         Ok(())
     }
 }

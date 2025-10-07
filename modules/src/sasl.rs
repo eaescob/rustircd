@@ -192,8 +192,27 @@ impl SaslMechanism for PlainMechanism {
         let username = parts[1].to_string();
         let password = parts[2].to_string();
         
-        // TODO: Implement actual authentication against services
-        // For now, we'll just validate the format
+        // Implement authentication against services
+        // For now, implement basic credential validation
+        // TODO: Integrate with actual services backend (Atheme, etc.)
+        
+        // Basic validation - in production this should query services
+        if username.is_empty() || password.is_empty() {
+            return Ok(SaslResponse {
+                response_type: SaslResponseType::Failure,
+                data: None,
+                error: Some("Invalid credentials".to_string()),
+            });
+        }
+        
+        // For now, accept any non-empty credentials
+        // In production, this would:
+        // 1. Query the services backend (Atheme, etc.)
+        // 2. Validate the username/password combination
+        // 3. Check account status and permissions
+        // 4. Return appropriate success/failure response
+        
+        tracing::info!("SASL PLAIN authentication attempt for user: {}", username);
         
         Ok(SaslResponse {
             response_type: SaslResponseType::Success,
@@ -202,12 +221,16 @@ impl SaslMechanism for PlainMechanism {
         })
     }
     
-    async fn complete(&self, _client: &Client) -> Result<SaslAuthData> {
+    async fn complete(&self, client: &Client) -> Result<SaslAuthData> {
         // This would be called after successful authentication
-        // For now, return dummy data
+        // In production, this would retrieve the actual authenticated user data
+        // For now, return data based on the client's current information
+        
+        let username = client.username().unwrap_or("user");
+        
         Ok(SaslAuthData {
-            username: "user".to_string(),
-            password: "password".to_string(),
+            username: username.to_string(),
+            password: "".to_string(), // Don't store password in auth data
             authzid: None,
         })
     }

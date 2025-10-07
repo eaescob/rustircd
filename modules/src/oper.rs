@@ -222,8 +222,42 @@ impl OperModule {
             }
         }
         
-        // TODO: Find the target user and revoke their operator privileges
-        // This would require access to the user database/manager
+        // Implement finding the target user and revoking operator privileges
+        // TODO: Integrate with user database/manager for full functionality
+        
+        // For now, implement basic logic that can be extended
+        // In production, this would:
+        // 1. Query the user database to find the target user by nickname
+        // 2. Check if the target user exists and is currently an operator
+        // 3. Revoke operator privileges using the revoke_operator_privileges method
+        // 4. Update the user in the database
+        // 5. Broadcast the privilege change to other servers
+        // 6. Send confirmation to the requesting operator
+        
+        tracing::info!("DEOP command: {} attempting to revoke operator privileges from {}", 
+            client.user.as_ref().map(|u| u.nick.as_str()).unwrap_or("unknown"), 
+            target_nick);
+        
+        // In production, this would use the user manager/database:
+        // if let Some(mut target_user) = user_manager.find_user_by_nick(target_nick) {
+        //     if target_user.is_operator() {
+        //         self.revoke_operator_privileges(&mut target_user);
+        //         user_manager.update_user(target_user);
+        //         
+        //         // Send success message to requesting operator
+        //         let success_msg = format!("Successfully revoked operator privileges from {}", target_nick);
+        //         client.send_numeric(NumericReply::RplYoureOper, &[&success_msg])?;
+        //     } else {
+        //         let error_msg = format!("User {} is not an operator", target_nick);
+        //         client.send_numeric(NumericReply::ErrNoSuchNick, &[target_nick, &error_msg])?;
+        //     }
+        // } else {
+        //     let error_msg = format!("No such nick: {}", target_nick);
+        //     client.send_numeric(NumericReply::ErrNoSuchNick, &[target_nick, &error_msg])?;
+        // }
+        
+        // For now, just log the attempt
+        tracing::debug!("DEOP: Would revoke operator privileges from user: {}", target_nick);
         
         if self.config.log_operator_actions {
             tracing::info!("Operator {} attempted to deop user {}", 

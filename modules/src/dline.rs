@@ -333,7 +333,7 @@ impl DlineModule {
         drop(client_connections);
         
         // Disconnect matching users
-        for (user_id, user) in users_to_disconnect {
+        for (user_id, user) in users_to_disconnect.clone() {
             info!("Disconnecting user {} due to DLINE: {}", user.nickname(), quit_reason);
             
             // Send QUIT message to the user
@@ -491,14 +491,36 @@ impl Module for DlineModule {
         }
     }
 
-    async fn handle_user_registration(&mut self, user: &User, _context: &ModuleContext) -> Result<()> {
+    async fn handle_user_registration(&mut self, user: &User, context: &ModuleContext) -> Result<()> {
         // Check if the user matches any active DLINEs
         if let Some(ban_reason) = self.check_user_dline(user).await {
-            // User is banned, we need to disconnect them
-            // This would need access to the server's client management system
+            // User is banned, disconnect them
             info!("User {} blocked by DLINE: {}", user.nickname(), ban_reason);
-            // TODO: Implement actual user disconnection when server context is available
-            return Err(Error::PermissionDenied(format!("Banned: {}", ban_reason)));
+            
+            // Send QUIT message to the user
+            let quit_message = Message::new(MessageType::Quit, vec![ban_reason.clone()]);
+            if let Some(client) = context.client_connections.read().await.get(&user.id) {
+                let _ = client.send(quit_message);
+            }
+            
+            // Broadcast QUIT to all users in the same channels
+            let quit_broadcast = Message::with_prefix(
+                user.prefix(),
+                MessageType::Quit,
+                vec![ban_reason.clone()],
+            );
+            
+            for channel in &user.channels {
+                context.send_to_channel(channel, quit_broadcast.clone()).await?;
+            }
+            
+            // Remove user from database
+            context.remove_user(user.id)?;
+            
+            // Unregister client connection
+            context.unregister_client(user.id).await?;
+            
+            return Err(Error::Auth(format!("Banned: {}", ban_reason)));
         }
         Ok(())
     }

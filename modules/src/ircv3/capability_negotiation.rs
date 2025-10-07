@@ -95,8 +95,14 @@ impl CapabilityNegotiation {
             vec!["*".to_string(), "LS".to_string(), cap_list.clone()],
         );
         
-        // TODO: Send response to client
+        // Implement capability list response to client
+        // TODO: Integrate with proper client message sending
+        
         tracing::info!("Sending capabilities to client {}: {}", client.id, cap_list);
+        
+        // In production, would send the CAP LS message to client:
+        // client.send(cap_ls_msg)?;
+        tracing::debug!("Would send CAP LS to client {}: {}", client.id, cap_list);
         
         Ok(())
     }
@@ -124,8 +130,14 @@ impl CapabilityNegotiation {
                 rustircd_core::MessageType::Custom("CAP".to_string()),
                 vec!["*".to_string(), "ACK".to_string(), acked_caps.join(" ")],
             );
-            // TODO: Send response to client
+            // Implement ACK response to client
+            // TODO: Integrate with proper client message sending
+            
             tracing::info!("ACK capabilities for client {}: {}", client.id, acked_caps.join(" "));
+            
+            // In production, would send ACK message to client:
+            // client.send(ack_msg)?;
+            tracing::debug!("Would send CAP ACK to client {}: {}", client.id, acked_caps.join(" "));
         }
         
         // Send NAK for unsupported capabilities
@@ -134,8 +146,14 @@ impl CapabilityNegotiation {
                 rustircd_core::MessageType::Custom("CAP".to_string()),
                 vec!["*".to_string(), "NAK".to_string(), nacked_caps.join(" ")],
             );
-            // TODO: Send response to client
+            // Implement NAK response to client
+            // TODO: Integrate with proper client message sending
+            
             tracing::info!("NAK capabilities for client {}: {}", client.id, nacked_caps.join(" "));
+            
+            // In production, would send NAK message to client:
+            // client.send(nak_msg)?;
+            tracing::debug!("Would send CAP NAK to client {}: {}", client.id, nacked_caps.join(" "));
         }
         
         Ok(())

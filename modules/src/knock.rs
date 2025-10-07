@@ -155,10 +155,21 @@ impl KnockModule {
     
     /// Check if user is already in the channel
     async fn is_user_in_channel(&self, user: &User, channel: &str) -> Result<bool> {
-        // TODO: Implement channel membership checking
-        // This would need access to the channel module or database
-        // For now, return false (user not in channel)
-        Ok(false)
+        // Implement channel membership checking
+        // TODO: Integrate with channel module for full channel membership support
+        
+        // For now, implement basic logic that can be extended
+        // In production, this would:
+        // 1. Query the channel module to check if user is a member
+        // 2. Check channel membership database
+        // 3. Return actual membership status
+        
+        // Basic implementation: check if user has the channel in their channel list
+        let is_member = user.channels.contains(&channel.to_string());
+        
+        tracing::debug!("Checking if user {} is in channel {}: {}", user.nickname(), channel, is_member);
+        
+        Ok(is_member)
     }
     
     /// Check knock rate limiting
@@ -224,16 +235,30 @@ impl KnockModule {
     
     /// Notify channel operators about knock request
     async fn notify_channel_operators(&self, request: &KnockRequest) -> Result<()> {
-        // TODO: Implement channel operator notification
-        // This would need access to the channel module to get operator list
-        // and the broadcast system to send messages
+        // Implement channel operator notification
+        // TODO: Integrate with channel module and broadcast system for full functionality
         
-        debug!("Knock notification for {}: {} ({}) wants to join {}: {}", 
-               request.channel, request.user_nick, request.user_host, 
-               request.channel, request.reason);
+        // For now, implement basic logging and message preparation
+        // In production, this would:
+        // 1. Query the channel module to get list of channel operators
+        // 2. Send NOTICE message to each operator
+        // 3. Use proper IRC message formatting with server prefix
         
-        // For now, just log the knock request
-        // In a real implementation, this would send a message to channel operators
+        let notification_message = format!(
+            "NOTICE @{} :{} ({}) wants to join {}: {}", 
+            request.channel, request.user_nick, request.user_host, 
+            request.channel, request.reason
+        );
+        
+        tracing::info!("Knock notification: {}", notification_message);
+        
+        // In production, this would use the channel module to:
+        // - Get list of channel operators (users with +o mode)
+        // - Send NOTICE message to each operator
+        // - Format message with proper server prefix
+        // - Handle errors if operators are not available
+        
+        tracing::debug!("Would send knock notification to operators of channel: {}", request.channel);
         
         Ok(())
     }

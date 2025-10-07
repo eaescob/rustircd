@@ -727,8 +727,8 @@ impl ChannelModule {
             let mode_params = self.get_mode_params(&channel);
             
             // Send mode reply to user
-            let _mode_reply = self.channel_mode_is(channel_name, &modes, &mode_params);
-            // TODO: Send reply to client
+            let mode_reply = self.channel_mode_is(channel_name, &modes, &mode_params);
+            self.send_reply_to_user(user.id, mode_reply).await?;
             
             return Ok(());
         }
@@ -941,12 +941,12 @@ impl ChannelModule {
         // If no topic provided, show current topic
         if message.params.len() == 1 {
             if let Some(ref topic) = channel.topic {
-                let _topic_reply = self.topic(channel_name, topic);
-                // TODO: Send reply to client
+                let topic_reply = self.topic(channel_name, topic);
+                self.send_reply_to_user(user.id, topic_reply).await?;
                 tracing::info!("User {} requested topic for channel {}", user.nick, channel_name);
             } else {
-                let _no_topic_reply = self.no_topic(channel_name);
-                // TODO: Send reply to client
+                let no_topic_reply = self.no_topic(channel_name);
+                self.send_reply_to_user(user.id, no_topic_reply).await?;
                 tracing::info!("User {} requested topic for channel {} (no topic set)", user.nick, channel_name);
             }
             return Ok(());
@@ -1052,12 +1052,12 @@ impl ChannelModule {
                 
                 // Send names reply (split into multiple messages if too long)
                 let names_str = names.join(" ");
-                let _names_reply = self.names_reply(&channel_name, &names_str);
-                // TODO: Send reply to client
+                let names_reply = self.names_reply(&channel_name, &names_str);
+                self.send_reply_to_user(user.id, names_reply).await?;
                 
                 // Send end of names
-                let _end_reply = self.end_of_names(&channel_name);
-                // TODO: Send reply to client
+                let end_reply = self.end_of_names(&channel_name);
+                self.send_reply_to_user(user.id, end_reply).await?;
                 
                 tracing::info!("Sent names for channel {} to user {}", channel_name, user.nick);
             }
@@ -1079,8 +1079,8 @@ impl ChannelModule {
         let channels = self.channels.read().await;
         
         // Send list start
-        let _list_start = self.list_start();
-        // TODO: Send reply to client
+        let list_start = self.list_start();
+        self.send_reply_to_user(user.id, list_start).await?;
         
         // Get channels to list
         let channels_to_list = if message.params.is_empty() {
@@ -1109,8 +1109,8 @@ impl ChannelModule {
                     let topic = channel.topic.as_deref().unwrap_or("");
                     let member_count = channel.member_count();
                     
-                    let _list_reply = self.list(&channel_name, &member_count.to_string(), topic);
-                    // TODO: Send reply to client
+                    let list_reply = self.list(&channel_name, &member_count.to_string(), topic);
+                    self.send_reply_to_user(user.id, list_reply).await?;
                     
                     tracing::debug!("Listed channel {} to user {}", channel_name, user.nick);
                 }
@@ -1118,8 +1118,8 @@ impl ChannelModule {
         }
         
         // Send list end
-        let _list_end = self.list_end();
-        // TODO: Send reply to client
+        let list_end = self.list_end();
+        self.send_reply_to_user(user.id, list_end).await?;
         
         tracing::info!("Sent channel list to user {}", user.nick);
         Ok(())
@@ -1196,8 +1196,8 @@ impl ChannelModule {
         broadcast_system.queue_message(broadcast)?;
         
         // Send confirmation to inviting user
-        let _inviting_reply = self.inviting(nick, channel_name);
-        // TODO: Send reply to client
+        let inviting_reply = self.inviting(nick, channel_name);
+        self.send_reply_to_user(user.id, inviting_reply).await?;
         
         tracing::info!("User {} invited {} to channel {}", user.nick, nick, channel_name);
         Ok(())

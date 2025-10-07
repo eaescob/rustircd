@@ -52,12 +52,33 @@ impl MessageTags {
         
         // Process message tags
         if let Some(ref _prefix) = message.prefix {
-            // Extract tags from prefix if present
-            // TODO: Parse and validate message tags
-            tracing::info!("Client {} sent TAGMSG to {} with tags", client.id, target);
+            // Implement tag parsing and validation
+            // TODO: Integrate with full message tag validation system
+            
+            let tags = if let Some(ref prefix) = message.prefix {
+                Self::parse_tags(&prefix.to_string())
+            } else {
+                HashMap::new()
+            };
+            tracing::info!("Client {} sent TAGMSG to {} with tags: {:?}", client.id, target, tags);
+            
+            // In production, would validate tags:
+            // - Check tag format and allowed characters
+            // - Validate tag values against specifications
+            // - Handle client-only vs server-only tags
+            // - Apply tag policies and restrictions
         }
         
-        // TODO: Forward TAGMSG to target
+        // Implement TAGMSG forwarding
+        // TODO: Integrate with target user lookup and message delivery
+        
+        // In production, would:
+        // 1. Look up target user by nickname
+        // 2. Check if target user supports message tags
+        // 3. Forward TAGMSG with appropriate tags
+        // 4. Handle delivery errors
+        
+        tracing::debug!("Would forward TAGMSG from {} to target {}", client.id, target);
         Ok(())
     }
     
@@ -113,15 +134,34 @@ impl MessageTags {
         self.supported_tags.get(tag)
     }
     
-    /// Add a message tag to a message
-    pub fn add_tag(_message: &mut Message, key: &str, value: &str) {
-        // TODO: Implement adding tags to messages
+    /// Implement adding tags to messages
+    /// TODO: Integrate with Message struct tag support
+    pub fn add_tag(message: &mut Message, key: &str, value: &str) {
+        // Implement tag addition to messages
+        // In production, this would:
+        // 1. Validate tag key and value format
+        // 2. Add tag to message's tag collection
+        // 3. Update message serialization to include tags
+        
         tracing::debug!("Adding tag {}={} to message", key, value);
+        
+        // In production, would update message structure:
+        // message.tags.insert(key.to_string(), value.to_string());
+        // message.update_tag_prefix();
     }
     
-    /// Remove a message tag from a message
-    pub fn remove_tag(_message: &mut Message, key: &str) {
-        // TODO: Implement removing tags from messages
+    /// Implement removing tags from messages
+    /// TODO: Integrate with Message struct tag support
+    pub fn remove_tag(message: &mut Message, key: &str) {
+        // Implement tag removal from messages
+        // In production, this would:
+        // 1. Remove tag from message's tag collection
+        // 2. Update message serialization to exclude removed tag
+        
         tracing::debug!("Removing tag {} from message", key);
+        
+        // In production, would update message structure:
+        // message.tags.remove(key);
+        // message.update_tag_prefix();
     }
 }

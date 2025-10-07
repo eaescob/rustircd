@@ -414,6 +414,23 @@ impl ModuleManager {
     pub fn supports_capability(&self, capability: &str) -> bool {
         self.modules.values().any(|m| m.supports_capability(capability))
     }
+    
+    /// Clear all modules (for reloading)
+    pub async fn clear_modules(&mut self) -> Result<()> {
+        // Cleanup all modules before clearing
+        for (name, mut module) in self.modules.drain() {
+            if let Err(e) = module.cleanup().await {
+                tracing::warn!("Failed to cleanup module {}: {}", name, e);
+            }
+        }
+        
+        // Clear handler lists
+        self.message_handlers.clear();
+        self.server_message_handlers.clear();
+        self.user_handlers.clear();
+        
+        Ok(())
+    }
 }
 
 impl Default for ModuleManager {

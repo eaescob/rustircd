@@ -197,14 +197,20 @@ impl AdminModule {
             match parameter.as_str() {
                 "SSL" => {
                     client.send_numeric(NumericReply::RplLocops, &["REHASH SSL: Reloading TLS settings..."])?;
+                    
+                    // First validate the configuration
                     match server.rehash_service().reload_ssl().await {
                         Ok(_) => {
-                            client.send_numeric(NumericReply::RplLocops, &["REHASH SSL: TLS settings reloaded successfully"])?;
-                            info!("REHASH SSL: TLS settings reloaded by {}", user.nickname());
+                            // If validation passes, reload the actual TLS configuration
+                            // Note: This requires a mutable reference to the server, which we don't have here
+                            // For now, we'll just report validation success
+                            client.send_numeric(NumericReply::RplLocops, &["REHASH SSL: TLS configuration validated successfully"])?;
+                            client.send_numeric(NumericReply::RplLocops, &["REHASH SSL: Note - TLS reload requires server restart for full effect"])?;
+                            info!("REHASH SSL: TLS configuration validated by {}", user.nickname());
                         }
                         Err(e) => {
-                            client.send_numeric(NumericReply::RplLocops, &[&format!("REHASH SSL: Failed to reload TLS settings: {}", e)])?;
-                            error!("REHASH SSL: Failed to reload TLS settings by {}: {}", user.nickname(), e);
+                            client.send_numeric(NumericReply::RplLocops, &[&format!("REHASH SSL: Failed to validate TLS settings: {}", e)])?;
+                            error!("REHASH SSL: Failed to validate TLS settings by {}: {}", user.nickname(), e);
                         }
                     }
                 }
@@ -212,12 +218,13 @@ impl AdminModule {
                     client.send_numeric(NumericReply::RplLocops, &["REHASH MOTD: Reloading MOTD file..."])?;
                     match server.rehash_service().reload_motd().await {
                         Ok(_) => {
-                            client.send_numeric(NumericReply::RplLocops, &["REHASH MOTD: MOTD file reloaded successfully"])?;
-                            info!("REHASH MOTD: MOTD file reloaded by {}", user.nickname());
+                            client.send_numeric(NumericReply::RplLocops, &["REHASH MOTD: MOTD configuration validated successfully"])?;
+                            client.send_numeric(NumericReply::RplLocops, &["REHASH MOTD: Note - MOTD reload requires server restart for full effect"])?;
+                            info!("REHASH MOTD: MOTD configuration validated by {}", user.nickname());
                         }
                         Err(e) => {
-                            client.send_numeric(NumericReply::RplLocops, &[&format!("REHASH MOTD: Failed to reload MOTD file: {}", e)])?;
-                            error!("REHASH MOTD: Failed to reload MOTD file by {}: {}", user.nickname(), e);
+                            client.send_numeric(NumericReply::RplLocops, &[&format!("REHASH MOTD: Failed to validate MOTD file: {}", e)])?;
+                            error!("REHASH MOTD: Failed to validate MOTD file by {}: {}", user.nickname(), e);
                         }
                     }
                 }
@@ -225,12 +232,13 @@ impl AdminModule {
                     client.send_numeric(NumericReply::RplLocops, &["REHASH MODULES: Reloading all modules..."])?;
                     match server.rehash_service().reload_modules().await {
                         Ok(_) => {
-                            client.send_numeric(NumericReply::RplLocops, &["REHASH MODULES: All modules reloaded successfully"])?;
-                            info!("REHASH MODULES: All modules reloaded by {}", user.nickname());
+                            client.send_numeric(NumericReply::RplLocops, &["REHASH MODULES: Module configuration validated successfully"])?;
+                            client.send_numeric(NumericReply::RplLocops, &["REHASH MODULES: Note - Module reload requires server restart for full effect"])?;
+                            info!("REHASH MODULES: Module configuration validated by {}", user.nickname());
                         }
                         Err(e) => {
-                            client.send_numeric(NumericReply::RplLocops, &[&format!("REHASH MODULES: Failed to reload modules: {}", e)])?;
-                            error!("REHASH MODULES: Failed to reload modules by {}: {}", user.nickname(), e);
+                            client.send_numeric(NumericReply::RplLocops, &[&format!("REHASH MODULES: Failed to validate module configuration: {}", e)])?;
+                            error!("REHASH MODULES: Failed to validate module configuration by {}: {}", user.nickname(), e);
                         }
                     }
                 }

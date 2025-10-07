@@ -18,6 +18,7 @@ use rustls::{ServerConfig, Certificate, PrivateKey};
 use std::io::BufReader;
 use uuid::Uuid;
 use tokio::io::{AsyncWriteExt, AsyncBufReadExt};
+use tracing::{info, warn};
 
 /// Main IRC server
 pub struct Server {
@@ -3573,5 +3574,54 @@ impl Server {
     /// Get the rehash service
     pub fn rehash_service(&self) -> &Arc<RehashService> {
         &self.rehash_service
+    }
+    
+    /// Reload MOTD from configuration
+    pub async fn reload_motd(&mut self) -> Result<()> {
+        let config = self.config.clone();
+        
+        if let Some(motd_file) = &config.server.motd_file {
+            info!("Reloading MOTD from file: {}", motd_file);
+            let mut new_motd_manager = MotdManager::new();
+            new_motd_manager.load_motd(motd_file).await?;
+            self.motd_manager = Arc::new(new_motd_manager);
+            info!("MOTD reloaded successfully from: {}", motd_file);
+        } else {
+            warn!("No MOTD file configured, clearing MOTD");
+            self.motd_manager = Arc::new(MotdManager::new());
+            info!("MOTD cleared successfully");
+        }
+        
+        Ok(())
+    }
+    
+    /// Reload TLS configuration
+    pub async fn reload_tls(&mut self) -> Result<()> {
+        if !self.config.security.tls.enabled {
+            warn!("TLS is not enabled, skipping TLS reload");
+            return Ok(());
+        }
+        
+        info!("Reloading TLS configuration");
+        self.setup_tls().await?;
+        info!("TLS configuration reloaded successfully");
+        Ok(())
+    }
+    
+    /// Reload modules from configuration
+    pub async fn reload_modules(&mut self) -> Result<()> {
+        info!("Reloading modules from configuration");
+        
+        // Clear existing modules
+        {
+            let mut module_manager = self.module_manager.write().await;
+            module_manager.clear_modules().await?;
+        }
+        
+        // Load modules from configuration
+        self.load_modules().await?;
+        
+        info!("Modules reloaded successfully");
+        Ok(())
     }
 }

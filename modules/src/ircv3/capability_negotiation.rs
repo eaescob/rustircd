@@ -30,6 +30,7 @@ impl CapabilityNegotiation {
         capabilities.insert("extended-join".to_string());
         capabilities.insert("invite-notify".to_string());
         capabilities.insert("multi-prefix".to_string());
+        capabilities.insert("sasl".to_string());
         capabilities.insert("server-time".to_string());
         capabilities.insert("userhost-in-names".to_string());
         

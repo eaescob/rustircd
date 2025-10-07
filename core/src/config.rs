@@ -386,6 +386,34 @@ pub struct ModuleConfig {
     pub module_settings: HashMap<String, serde_json::Value>,
     /// Throttling configuration
     pub throttling: ThrottlingConfig,
+    /// Messaging modules configuration
+    pub messaging: MessagingConfig,
+}
+
+/// Messaging modules configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessagingConfig {
+    /// Enable messaging modules system
+    pub enabled: bool,
+    /// Wallops module configuration
+    pub wallops: MessagingModuleConfig,
+    /// Globops module configuration
+    pub globops: MessagingModuleConfig,
+}
+
+/// Individual messaging module configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessagingModuleConfig {
+    /// Whether this module is enabled
+    pub enabled: bool,
+    /// Whether operator privileges are required to send messages
+    pub require_operator: bool,
+    /// The user mode character for receiving messages
+    pub receiver_mode: Option<char>,
+    /// Whether the receiver mode can only be set by the user themselves
+    pub self_only_mode: bool,
+    /// Whether the receiver mode requires operator privileges to set
+    pub mode_requires_operator: bool,
 }
 
 /// Throttling configuration for connection rate limiting
@@ -628,6 +656,41 @@ impl Default for ModuleConfig {
             enabled_modules: Vec::new(),
             module_settings: HashMap::new(),
             throttling: ThrottlingConfig::default(),
+            messaging: MessagingConfig::default(),
+        }
+    }
+}
+
+impl Default for MessagingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            wallops: MessagingModuleConfig {
+                enabled: true,
+                require_operator: true,
+                receiver_mode: Some('w'),
+                self_only_mode: true,
+                mode_requires_operator: false,  // Users can set +w themselves
+            },
+            globops: MessagingModuleConfig {
+                enabled: true,
+                require_operator: true,
+                receiver_mode: Some('g'),
+                self_only_mode: false,          // Operators can set +g on others
+                mode_requires_operator: true,   // Only operators can set +g
+            },
+        }
+    }
+}
+
+impl Default for MessagingModuleConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            require_operator: true,
+            receiver_mode: None,
+            self_only_mode: true,
+            mode_requires_operator: false,
         }
     }
 }

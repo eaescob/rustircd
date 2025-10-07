@@ -11,6 +11,7 @@ pub mod user_properties;
 pub mod core_integration;
 pub mod extended_join;
 pub mod multi_prefix;
+pub mod sasl_capability;
 
 use rustircd_core::{Module, module::ModuleResult, Client, Message, User, Result, module::ModuleContext};
 use async_trait::async_trait;
@@ -34,6 +35,7 @@ pub struct Ircv3Module {
     user_properties: user_properties::UserProperties,
     extended_join: Arc<Mutex<extended_join::ExtendedJoin>>,
     multi_prefix: Arc<Mutex<multi_prefix::MultiPrefix>>,
+    sasl_capability: Arc<Mutex<sasl_capability::SaslCapability>>,
 }
 
 impl Ircv3Module {
@@ -51,6 +53,7 @@ impl Ircv3Module {
         capabilities.insert("extended-join".to_string());
         capabilities.insert("invite-notify".to_string());
         capabilities.insert("multi-prefix".to_string());
+        capabilities.insert("sasl".to_string());
         capabilities.insert("server-time".to_string());
         capabilities.insert("userhost-in-names".to_string());
         
@@ -69,6 +72,7 @@ impl Ircv3Module {
             user_properties: user_properties::UserProperties::new(),
             extended_join: Arc::new(Mutex::new(extended_join::ExtendedJoin::new())),
             multi_prefix: Arc::new(Mutex::new(multi_prefix::MultiPrefix::new())),
+            sasl_capability: Arc::new(Mutex::new(sasl_capability::SaslCapability::new())),
         }
     }
 }
@@ -93,10 +97,12 @@ impl Module for Ircv3Module {
         // Set up capability callbacks
         let extended_join = Arc::clone(&self.extended_join);
         let multi_prefix = Arc::clone(&self.multi_prefix);
+        let sasl_capability = Arc::clone(&self.sasl_capability);
         
         self.capability_negotiation.set_on_capabilities_enabled(move |client_id, capabilities| {
             let extended_join = extended_join.clone();
             let multi_prefix = multi_prefix.clone();
+            let sasl_capability = sasl_capability.clone();
             let capabilities = capabilities.to_vec();
             tokio::spawn(async move {
                 for cap in capabilities {
@@ -109,6 +115,10 @@ impl Module for Ircv3Module {
                             let mut mp = multi_prefix.lock().await;
                             mp.enable_for_client(client_id);
                         }
+                        "sasl" => {
+                            let sasl = sasl_capability.lock().await;
+                            sasl.enable_for_client(client_id).await;
+                        }
                         _ => {}
                     }
                 }
@@ -117,10 +127,12 @@ impl Module for Ircv3Module {
         
         let extended_join = Arc::clone(&self.extended_join);
         let multi_prefix = Arc::clone(&self.multi_prefix);
+        let sasl_capability = Arc::clone(&self.sasl_capability);
         
         self.capability_negotiation.set_on_capabilities_disabled(move |client_id, capabilities| {
             let extended_join = extended_join.clone();
             let multi_prefix = multi_prefix.clone();
+            let sasl_capability = sasl_capability.clone();
             let capabilities = capabilities.to_vec();
             tokio::spawn(async move {
                 for cap in capabilities {
@@ -132,6 +144,10 @@ impl Module for Ircv3Module {
                         "multi-prefix" => {
                             let mut mp = multi_prefix.lock().await;
                             mp.disable_for_client(client_id);
+                        }
+                        "sasl" => {
+                            let sasl = sasl_capability.lock().await;
+                            sasl.disable_for_client(client_id).await;
                         }
                         _ => {}
                     }
@@ -198,6 +214,11 @@ impl Module for Ircv3Module {
                 match cmd.as_str() {
                     "TAGMSG" => {
                         self.message_tags.handle_tagmsg(client, message).await?;
+                        Ok(ModuleResult::Handled)
+                    }
+                    "AUTHENTICATE" => {
+                        let sasl = self.sasl_capability.lock().await;
+                        sasl.handle_authenticate(client, message).await?;
                         Ok(ModuleResult::Handled)
                     }
                     _ => Ok(ModuleResult::NotHandled),
@@ -365,5 +386,29 @@ impl Ircv3Module {
     pub async fn get_real_name(&self, client: &Client) -> Option<String> {
         let ej = self.extended_join.lock().await;
         ej.get_real_name(client)
+    }
+    
+    /// Enable SASL capability for a client
+    pub async fn enable_sasl(&mut self, client_id: uuid::Uuid) {
+        let sasl = self.sasl_capability.lock().await;
+        sasl.enable_for_client(client_id).await;
+    }
+    
+    /// Disable SASL capability for a client
+    pub async fn disable_sasl(&mut self, client_id: uuid::Uuid) {
+        let sasl = self.sasl_capability.lock().await;
+        sasl.disable_for_client(client_id).await;
+    }
+    
+    /// Check if SASL capability is enabled for a client
+    pub async fn is_sasl_enabled(&self, client_id: &uuid::Uuid) -> bool {
+        let sasl = self.sasl_capability.lock().await;
+        sasl.is_enabled_for_client(client_id).await
+    }
+    
+    /// Get SASL capability information for CAP LS response
+    pub async fn get_sasl_capability_info(&self) -> String {
+        let sasl = self.sasl_capability.lock().await;
+        sasl.get_capability_info()
     }
 }

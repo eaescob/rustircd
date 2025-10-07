@@ -28,6 +28,7 @@ rustc-hash = "1.1"
 sha2 = "0.10"
 trust-dns-resolver = "0.23"
 tokio-util = "0.7"
+lazy_static = "1.4"
 
 [dev-dependencies]
 tokio-test = "0.4"

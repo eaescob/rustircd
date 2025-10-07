@@ -4,7 +4,7 @@
 //! and delegates to the MessagingManager for handling messaging commands.
 
 use async_trait::async_trait;
-use rustircd_core::{Client, Message, Result, Server, User};
+use rustircd_core::{Client, Message, Result, Server, User, config::MessagingConfig};
 use rustircd_core::module::{Module, ModuleResult, ModuleStatsResponse, ModuleContext};
 use super::{MessagingManager, MessagingModule};
 
@@ -27,9 +27,81 @@ impl MessagingWrapper {
         }
     }
     
+    /// Create a new messaging wrapper with configuration
+    pub fn with_config(name: String, version: String, description: String, config: &MessagingConfig) -> Self {
+        let mut wrapper = Self {
+            manager: MessagingManager::new(),
+            name,
+            version,
+            description,
+        };
+        
+        wrapper.load_modules_from_config(config);
+        wrapper
+    }
+    
+    /// Load modules based on configuration
+    fn load_modules_from_config(&mut self, config: &MessagingConfig) {
+        if !config.enabled {
+            tracing::info!("Messaging modules disabled in configuration");
+            return;
+        }
+        
+        // Load WALLOPS module if enabled
+        if config.wallops.enabled {
+            if let Some(mode_char) = config.wallops.receiver_mode {
+                let wallops_mode = rustircd_core::CustomUserMode {
+                    character: mode_char,
+                    description: "Receive wallop messages".to_string(),
+                    requires_operator: config.wallops.mode_requires_operator,
+                    self_only: config.wallops.self_only_mode,
+                    oper_only: false,
+                    module_name: "wallops".to_string(),
+                };
+                
+                if let Err(e) = rustircd_core::register_custom_mode(wallops_mode) {
+                    tracing::warn!("Failed to register wallops mode: {}", e);
+                } else {
+                    let wallops_module = Box::new(super::WallopsModule::new());
+                    self.manager.register_module(wallops_module);
+                    tracing::info!("WALLOPS module loaded with mode '{}' (users can set themselves)", mode_char);
+                }
+            }
+        }
+        
+        // Load GLOBOPS module if enabled
+        if config.globops.enabled {
+            if let Some(mode_char) = config.globops.receiver_mode {
+                let globops_mode = rustircd_core::CustomUserMode {
+                    character: mode_char,
+                    description: "Receive global operator notices".to_string(),
+                    requires_operator: config.globops.mode_requires_operator,
+                    self_only: config.globops.self_only_mode,
+                    oper_only: false,
+                    module_name: "globops".to_string(),
+                };
+                
+                if let Err(e) = rustircd_core::register_custom_mode(globops_mode) {
+                    tracing::warn!("Failed to register globops mode: {}", e);
+                } else {
+                    let globops_module = Box::new(super::GlobopsModule::new());
+                    self.manager.register_module(globops_module);
+                    tracing::info!("GLOBOPS module loaded with mode '{}' (only operators can set)", mode_char);
+                }
+            }
+        }
+    }
+    
     /// Register a messaging module
     pub fn register_messaging_module(&mut self, module: Box<dyn MessagingModule>) {
         self.manager.register_module(module);
+    }
+    
+    /// Register a messaging module with initialization
+    pub fn register_messaging_module_with_init(&mut self, module: Box<dyn MessagingModule>, init_fn: impl FnOnce() -> Result<()>) -> Result<()> {
+        init_fn()?;
+        self.manager.register_module(module);
+        Ok(())
     }
     
     /// Get the messaging manager
@@ -145,16 +217,23 @@ impl Module for MessagingWrapper {
     }
 }
 
-/// Create a default messaging wrapper with wallops support
+/// Create a default messaging wrapper with wallops and globops support
 pub fn create_default_messaging_module() -> MessagingWrapper {
-    let mut wrapper = MessagingWrapper::new(
+    let config = MessagingConfig::default();
+    MessagingWrapper::with_config(
         "messaging".to_string(),
         "1.0.0".to_string(),
-        "IRC messaging commands (wallops, etc.)".to_string(),
-    );
-    
-    // Register the wallops module
-    wrapper.register_messaging_module(Box::new(super::WallopsModule::new()));
-    
-    wrapper
+        "IRC messaging commands (wallops, globops, etc.)".to_string(),
+        &config,
+    )
+}
+
+/// Create a messaging wrapper with custom configuration
+pub fn create_messaging_module_with_config(config: &MessagingConfig) -> MessagingWrapper {
+    MessagingWrapper::with_config(
+        "messaging".to_string(),
+        "1.0.0".to_string(),
+        "IRC messaging commands (configurable)".to_string(),
+        config,
+    )
 }

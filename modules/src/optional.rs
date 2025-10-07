@@ -15,7 +15,7 @@ impl OptionalModule {
         Self {
             name: "optional".to_string(),
             version: "1.0.0".to_string(),
-            description: "Optional IRC commands (AWAY, REHASH, SUMMON, ISON, etc.)".to_string(),
+            description: "Optional IRC commands (AWAY, REHASH, SUMMON, ISON, WALLOPS, etc.)".to_string(),
         }
     }
 }
@@ -66,10 +66,6 @@ impl Module for OptionalModule {
                     }
                     "ISON" => {
                         self.handle_ison(client, message).await?;
-                        Ok(ModuleResult::Handled)
-                    }
-                    "OPERWALL" => {
-                        self.handle_operwall(client, message).await?;
                         Ok(ModuleResult::Handled)
                     }
                     "WALLOPS" => {
@@ -268,43 +264,6 @@ impl OptionalModule {
         Ok(())
     }
     
-    async fn handle_operwall(&self, client: &Client, message: &Message) -> Result<()> {
-        if !client.is_registered() {
-            return Err(Error::User("Client not registered".to_string()));
-        }
-        
-        // Implement OPERWALL command for operators
-        // TODO: Integrate with operator broadcasting system
-        
-        // Check if client is operator
-        if let Some(user) = &client.user {
-            if !user.is_operator() {
-                tracing::warn!("Non-operator {} attempted OPERWALL command", user.nickname());
-                return Err(Error::User("Permission denied".to_string()));
-            }
-        } else {
-            return Err(Error::User("User not found".to_string()));
-        }
-        
-        if message.params.is_empty() {
-            return Err(Error::User("No message specified".to_string()));
-        }
-        
-        let wall_message = message.params.join(" ");
-        
-        // Implement operator wall message broadcasting
-        // In production, this would:
-        // 1. Get all connected operators from user database
-        // 2. Send NOTICE message to each operator
-        // 3. Broadcast to other servers for network-wide operator notification
-        
-        if let Some(user) = &client.user {
-            tracing::info!("Operator {} sent OPERWALL: {}", user.nickname(), wall_message);
-            tracing::debug!("Would broadcast OPERWALL to all operators on network");
-        }
-        
-        Ok(())
-    }
     
     async fn handle_wallops(&self, client: &Client, message: &Message) -> Result<()> {
         if !client.is_registered() {

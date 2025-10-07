@@ -1039,7 +1039,9 @@ impl Server {
                 self.handle_notice(client_id, message).await?;
             }
             MessageType::Wallops => {
-                self.handle_wallops(client_id, message).await?;
+                // WALLOPS is now handled by messaging modules
+                // Let modules handle this command
+                return Ok(());
             }
             // Miscellaneous commands
             MessageType::Away => {
@@ -1995,76 +1997,6 @@ impl Server {
         Ok(())
     }
     
-    /// Handle WALLOPS command
-    async fn handle_wallops(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
-        let connection_handler = self.connection_handler.read().await;
-        if let Some(client) = connection_handler.get_client(&client_id) {
-            if !client.is_registered() {
-                let error_msg = NumericReply::not_registered();
-                let _ = client.send(error_msg);
-                return Ok(());
-            }
-            
-            // Check if user is an operator
-            if let Some(user) = &client.user {
-                if !user.is_operator {
-                    let error_msg = NumericReply::no_privileges();
-                    let _ = client.send(error_msg);
-                    return Ok(());
-                }
-            } else {
-                let error_msg = NumericReply::not_registered();
-                let _ = client.send(error_msg);
-                return Ok(());
-            }
-            
-            if message.params.is_empty() {
-                let error_msg = NumericReply::no_text_to_send();
-                let _ = client.send(error_msg);
-                return Ok(());
-            }
-            
-            // Get the wallops message (all parameters joined)
-            let wallops_message = message.params.join(" ");
-            let sender_nick = client.nickname().unwrap_or("unknown");
-            
-            // Create the wallops message format
-            let wallops_msg = format!(":{} WALLOPS :{}", sender_nick, wallops_message);
-            
-            // Send to all local clients with wallops mode (+w)
-            let mut local_sent_count = 0;
-            for (_, user) in self.users.read().await.iter() {
-                if user.has_mode('w') {
-                    // Find the user's client and send the message
-                    if let Some(user_client) = connection_handler.get_client_by_nick(&user.nick) {
-                        if let Err(e) = user_client.send_raw(&wallops_msg) {
-                            tracing::warn!("Failed to send wallops to {}: {}", user.nick, e);
-                        } else {
-                            local_sent_count += 1;
-                        }
-                    }
-                }
-            }
-            
-            // Broadcast to all connected servers
-            let server_wallops_msg = Message::new(
-                MessageType::Wallops,
-                vec![wallops_message.clone()]
-            );
-            
-            if let Err(e) = self.server_connections.broadcast_to_servers(server_wallops_msg).await {
-                tracing::warn!("Failed to broadcast wallops to servers: {}", e);
-            }
-            
-            tracing::info!(
-                "Wallops sent by {} to {} local recipients and broadcast to servers: {}",
-                sender_nick,
-                local_sent_count,
-                wallops_message
-            );
-        }
-        Ok(())
-    }
 
     /// Handle NOTICE command
     async fn handle_notice(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
@@ -3322,10 +3254,11 @@ impl Server {
         let mut changes_applied = Vec::new();
         
         for (action, mode_char) in mode_changes {
+            let adding = action;
+            
+            // Check if it's a core mode
             if let Some(user_mode) = crate::user_modes::UserMode::from_char(mode_char) {
-                let adding = action;
-                
-                // Validate mode change
+                // Validate core mode change
                 if let Err(_e) = self.validate_mode_change(
                     &target_user,
                     user_mode,
@@ -3350,6 +3283,32 @@ impl Server {
                 } else {
                     updated_user.remove_mode(mode_char);
                     changes_applied.push(format!("-{}", mode_char));
+                }
+            } else {
+                // Check if it's a custom mode
+                if crate::extensible_modes::is_valid_user_mode(mode_char) {
+                    // Validate custom mode change
+                    if let Err(_e) = crate::extensible_modes::validate_custom_mode_change(
+                        mode_char,
+                        adding,
+                        &target_user.nick,
+                        &requesting_user.nick,
+                        requesting_user.is_operator,
+                    ) {
+                        return self.send_error(client_id, NumericReply::err_users_dont_match()).await;
+                    }
+                    
+                    // Apply custom mode change
+                    if adding {
+                        updated_user.add_mode(mode_char);
+                        changes_applied.push(format!("+{}", mode_char));
+                    } else {
+                        updated_user.remove_mode(mode_char);
+                        changes_applied.push(format!("-{}", mode_char));
+                    }
+                } else {
+                    // Invalid mode
+                    return self.send_error(client_id, NumericReply::err_users_dont_match()).await;
                 }
             }
         }

@@ -13,6 +13,7 @@ pub mod module;
 pub mod server;
 pub mod user;
 pub mod user_modes;
+pub mod extensible_modes;
 pub mod numeric;
 pub mod replies_config;
 pub mod utils;
@@ -39,6 +40,13 @@ pub use module::{Module, ModuleManager};
 pub use server::Server;
 pub use user::User;
 pub use user_modes::{UserMode, UserModeManager};
+pub use extensible_modes::{
+    CustomUserMode, ExtensibleModeRegistry,
+    register_custom_mode, unregister_custom_mode,
+    is_valid_user_mode, get_custom_mode,
+    validate_custom_mode_change, get_all_custom_modes,
+    get_custom_modes_by_module
+};
 pub use numeric::NumericReply;
 pub use replies_config::{RepliesConfig, ReplyConfig, ServerInfo as RepliesServerInfo};
 pub use database::{Database, DatabaseConfig, UserHistoryEntry, ServerInfo as DatabaseServerInfo, ChannelInfo};

@@ -1,0 +1,19 @@
+# Globops Only Configuration
+# This configuration enables only GLOBOPS, WALLOPS is disabled
+
+[modules.messaging]
+enabled = true
+
+[modules.messaging.wallops]
+enabled = false
+require_operator = true
+receiver_mode = null
+self_only_mode = true
+mode_requires_operator = false
+
+[modules.messaging.globops]
+enabled = true
+require_operator = true
+receiver_mode = "g"
+self_only_mode = false  # Operators can set +g on others
+mode_requires_operator = true  # Only operators can set +g

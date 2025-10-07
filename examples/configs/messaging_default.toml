@@ -1,0 +1,19 @@
+# Default Messaging Configuration
+# This configuration enables both WALLOPS and GLOBOPS with standard settings
+
+[modules.messaging]
+enabled = true
+
+[modules.messaging.wallops]
+enabled = true
+require_operator = true
+receiver_mode = "w"
+self_only_mode = true
+mode_requires_operator = false  # Users can set +w themselves
+
+[modules.messaging.globops]
+enabled = true
+require_operator = true
+receiver_mode = "g"
+self_only_mode = false  # Operators can set +g on others
+mode_requires_operator = true  # Only operators can set +g

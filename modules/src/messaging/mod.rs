@@ -147,6 +147,8 @@ impl Default for MessagingManager {
 
 // Export the wallops module and wrapper
 pub mod wallops;
+pub mod globops;
 pub mod wrapper;
 pub use wallops::WallopsModule;
-pub use wrapper::{MessagingWrapper, create_default_messaging_module};
+pub use globops::GlobopsModule;
+pub use wrapper::{MessagingWrapper, create_default_messaging_module, create_messaging_module_with_config};

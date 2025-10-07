@@ -13,8 +13,6 @@ pub enum UserMode {
     Away,
     /// Invisible mode - user doesn't appear in WHO lists
     Invisible,
-    /// Wallops mode - user receives wallop messages
-    Wallops,
     /// Restricted mode - user is restricted from certain actions
     Restricted,
     /// Operator mode - user has operator privileges
@@ -31,7 +29,6 @@ impl UserMode {
         match self {
             UserMode::Away => 'a',
             UserMode::Invisible => 'i',
-            UserMode::Wallops => 'w',
             UserMode::Restricted => 'r',
             UserMode::Operator => 'o',
             UserMode::LocalOperator => 'O',
@@ -44,7 +41,6 @@ impl UserMode {
         match c {
             'a' => Some(UserMode::Away),
             'i' => Some(UserMode::Invisible),
-            'w' => Some(UserMode::Wallops),
             'r' => Some(UserMode::Restricted),
             'o' => Some(UserMode::Operator),
             'O' => Some(UserMode::LocalOperator),
@@ -58,7 +54,6 @@ impl UserMode {
         match self {
             UserMode::Away => "User is away",
             UserMode::Invisible => "User is invisible in WHO lists",
-            UserMode::Wallops => "User receives wallop messages",
             UserMode::Restricted => "User is restricted",
             UserMode::Operator => "User has operator privileges",
             UserMode::LocalOperator => "User has local operator privileges",
@@ -90,7 +85,6 @@ impl UserMode {
         match self {
             UserMode::Away => true,
             UserMode::Invisible => true,
-            UserMode::Wallops => true,
             UserMode::ServerNotices => true,
             _ => false,
         }
@@ -250,10 +244,6 @@ impl UserModeManager {
         !self.has_mode(UserMode::Invisible)
     }
 
-    /// Check if user should receive wallops
-    pub fn should_receive_wallops(&self) -> bool {
-        self.has_mode(UserMode::Wallops)
-    }
 
     /// Check if user should receive server notices
     pub fn should_receive_server_notices(&self) -> bool {
@@ -278,7 +268,7 @@ impl Default for UserModeManager {
 }
 
 /// Standard IRC user mode characters
-pub const STANDARD_USER_MODES: &[char] = &['a', 'i', 'w', 'r', 'o', 'O', 's'];
+pub const STANDARD_USER_MODES: &[char] = &['a', 'i', 'r', 'o', 'O', 's'];
 
 /// Check if a character is a valid user mode
 pub fn is_valid_user_mode(c: char) -> bool {

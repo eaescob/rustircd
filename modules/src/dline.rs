@@ -71,7 +71,7 @@ impl DlineModule {
     }
     
     /// Handle DLINE command
-    async fn handle_dline(&self, client: &Client, user: &User, args: &[String]) -> Result<()> {
+    async fn handle_dline(&self, client: &Client, user: &User, args: &[String], context: &ModuleContext) -> Result<()> {
         if !user.is_operator() {
             client.send_numeric(NumericReply::ErrNoPrivileges, &["Permission denied"])?;
             return Ok(());
@@ -95,12 +95,12 @@ impl DlineModule {
             None
         };
         
-        self.add_dline(client, user, hostname, &reason, duration).await?;
+        self.add_dline(client, user, hostname, &reason, duration, context).await?;
         Ok(())
     }
     
     /// Handle UNDLINE command
-    async fn handle_undline(&self, client: &Client, user: &User, args: &[String]) -> Result<()> {
+    async fn handle_undline(&self, client: &Client, user: &User, args: &[String], context: &ModuleContext) -> Result<()> {
         if !user.is_operator() {
             client.send_numeric(NumericReply::ErrNoPrivileges, &["Permission denied"])?;
             return Ok(());
@@ -112,12 +112,12 @@ impl DlineModule {
         }
         
         let hostname = &args[0];
-        self.remove_dline(client, user, hostname).await?;
+        self.remove_dline(client, user, hostname, context).await?;
         Ok(())
     }
     
     /// Add a DLINE
-    async fn add_dline(&self, client: &Client, user: &User, hostname: &str, reason: &str, duration: Option<u64>) -> Result<()> {
+    async fn add_dline(&self, client: &Client, user: &User, hostname: &str, reason: &str, duration: Option<u64>, context: &ModuleContext) -> Result<()> {
         let current_time = self.get_current_time();
         let expire_time = duration.map(|d| current_time + d);
         
@@ -143,16 +143,27 @@ impl DlineModule {
         client.send_numeric(NumericReply::RplDline, &[hostname, reason, &format!("Set by {}", user.nickname())])?;
         
         info!("DLINE added: {} by {} - {}", hostname, user.nickname(), reason);
+        
+        // Broadcast to other servers
+        self.broadcast_dline_to_servers(hostname, reason, &user.nickname(), duration, context).await?;
+        
+        // Check existing connections and disconnect matching users
+        self.disconnect_matching_users(hostname, &format!("DLINE: {}", reason), context).await?;
+        
         Ok(())
     }
     
     /// Remove a DLINE
-    async fn remove_dline(&self, client: &Client, user: &User, hostname: &str) -> Result<()> {
+    async fn remove_dline(&self, client: &Client, user: &User, hostname: &str, context: &ModuleContext) -> Result<()> {
         let mut dlines = self.dlines.write().await;
         
         if dlines.remove(hostname).is_some() {
             client.send_numeric(NumericReply::RplDline, &[hostname, "Removed", &format!("Removed by {}", user.nickname())])?;
             info!("DLINE removed: {} by {}", hostname, user.nickname());
+            
+            // Broadcast removal to other servers
+            drop(dlines); // Release the lock before async call
+            self.broadcast_undline_to_servers(hostname, &user.nickname(), context).await?;
         } else {
             client.send_numeric(NumericReply::ErrNoSuchDline, &[hostname, "No such DLINE"])?;
         }
@@ -259,11 +270,170 @@ impl DlineModule {
         }
         
         let current_time = self.get_current_time();
+        let mut expired_count = 0;
         
         let mut dlines = self.dlines.write().await;
         dlines.retain(|_, dline| {
-            dline.expire_time.map_or(true, |expire| current_time < expire)
+            let should_keep = dline.expire_time.map_or(true, |expire| current_time < expire);
+            if !should_keep {
+                expired_count += 1;
+            }
+            should_keep
         });
+        
+        if expired_count > 0 {
+            info!("Cleaned up {} expired DLINEs", expired_count);
+        }
+        
+        Ok(())
+    }
+    
+    /// Get count of active DLINEs
+    pub async fn get_active_dlines_count(&self) -> usize {
+        let dlines = self.dlines.read().await;
+        dlines.len()
+    }
+    
+    /// Get count of expired DLINEs
+    pub async fn get_expired_dlines_count(&self) -> usize {
+        let current_time = self.get_current_time();
+        let dlines = self.dlines.read().await;
+        
+        dlines.values().filter(|dline| {
+            dline.expire_time.map_or(false, |expire| current_time >= expire)
+        }).count()
+    }
+    
+    /// Broadcast DLINE to other servers
+    async fn broadcast_dline_to_servers(&self, hostname: &str, reason: &str, set_by: &str, duration: Option<u64>, context: &ModuleContext) -> Result<()> {
+        let mut params = vec![hostname.to_string(), reason.to_string(), set_by.to_string()];
+        if let Some(dur) = duration {
+            params.push(dur.to_string());
+        }
+        
+        let message = Message::new(MessageType::Custom("DLINE".to_string()), params);
+        context.broadcast_to_servers(message).await?;
+        info!("DLINE broadcasted to servers: {} {} {} {:?}", hostname, reason, set_by, duration);
+        Ok(())
+    }
+    
+    /// Disconnect users matching the ban hostname
+    async fn disconnect_matching_users(&self, hostname: &str, quit_reason: &str, context: &ModuleContext) -> Result<()> {
+        let client_connections = context.client_connections.read().await;
+        let mut users_to_disconnect = Vec::new();
+        
+        // Find all users that match the ban hostname
+        for (user_id, client) in client_connections.iter() {
+            if let Some(user) = client.get_user() {
+                if user.hostname().contains(hostname) {
+                    users_to_disconnect.push((*user_id, user.clone()));
+                }
+            }
+        }
+        drop(client_connections);
+        
+        // Disconnect matching users
+        for (user_id, user) in users_to_disconnect {
+            info!("Disconnecting user {} due to DLINE: {}", user.nickname(), quit_reason);
+            
+            // Send QUIT message to the user
+            let quit_message = Message::new(MessageType::Quit, vec![quit_reason.to_string()]);
+            if let Some(client) = context.client_connections.read().await.get(&user_id) {
+                let _ = client.send(quit_message);
+            }
+            
+            // Broadcast QUIT to all users in the same channels
+            let quit_broadcast = Message::with_prefix(
+                user.prefix(),
+                MessageType::Quit,
+                vec![quit_reason.to_string()],
+            );
+            
+            for channel in &user.channels {
+                context.send_to_channel(channel, quit_broadcast.clone()).await?;
+            }
+            
+            // Remove user from database
+            context.remove_user(user_id)?;
+            
+            // Unregister client connection
+            context.unregister_client(user_id).await?;
+        }
+        
+        if !users_to_disconnect.is_empty() {
+            info!("Disconnected {} users due to DLINE: {}", users_to_disconnect.len(), hostname);
+        }
+        
+        Ok(())
+    }
+    
+    /// Broadcast UNDLINE to other servers
+    async fn broadcast_undline_to_servers(&self, hostname: &str, removed_by: &str, context: &ModuleContext) -> Result<()> {
+        let message = Message::new(
+            MessageType::Custom("UNDLINE".to_string()),
+            vec![hostname.to_string(), removed_by.to_string()]
+        );
+        context.broadcast_to_servers(message).await?;
+        info!("UNDLINE broadcasted to servers: {} removed by {}", hostname, removed_by);
+        Ok(())
+    }
+    
+    /// Handle DLINE message from another server
+    async fn handle_server_dline(&self, server: &str, params: &[String], context: &ModuleContext) -> Result<()> {
+        if params.len() < 2 {
+            warn!("Invalid DLINE message from server {}: insufficient parameters", server);
+            return Ok(());
+        }
+        
+        let hostname = &params[0];
+        let reason = &params[1];
+        let set_by = if params.len() > 2 { &params[2] } else { "unknown" };
+        let duration = if params.len() > 3 {
+            self.parse_duration(&params[3]).ok().flatten()
+        } else {
+            None
+        };
+        
+        let current_time = self.get_current_time();
+        let expire_time = duration.map(|d| current_time + d);
+        
+        let dline = DnsLine {
+            hostname: hostname.to_string(),
+            reason: reason.to_string(),
+            set_by: set_by.to_string(),
+            set_time: current_time,
+            expire_time,
+            is_active: true,
+        };
+        
+        let mut dlines = self.dlines.write().await;
+        dlines.insert(hostname.to_string(), dline);
+        
+        info!("DLINE received from server {}: {} - {}", server, hostname, reason);
+        
+        // Check existing connections and disconnect matching users
+        drop(dlines); // Release the lock before async call
+        self.disconnect_matching_users(hostname, &format!("DLINE: {}", reason), context).await?;
+        
+        Ok(())
+    }
+    
+    /// Handle UNDLINE message from another server
+    async fn handle_server_undline(&self, server: &str, params: &[String], _context: &ModuleContext) -> Result<()> {
+        if params.is_empty() {
+            warn!("Invalid UNDLINE message from server {}: no parameters", server);
+            return Ok(());
+        }
+        
+        let hostname = &params[0];
+        let removed_by = if params.len() > 1 { &params[1] } else { "unknown" };
+        
+        let mut dlines = self.dlines.write().await;
+        if dlines.remove(hostname).is_some() {
+            info!("UNDLINE received from server {}: {} removed by {}", server, hostname, removed_by);
+        } else {
+            debug!("UNDLINE received from server {} for non-existent DLINE: {}", server, hostname);
+        }
         
         Ok(())
     }
@@ -288,7 +458,7 @@ impl Module for DlineModule {
         Ok(())
     }
 
-    async fn handle_message(&mut self, client: &Client, message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
+    async fn handle_message(&mut self, client: &Client, message: &Message, context: &ModuleContext) -> Result<ModuleResult> {
         let user = match &client.user {
             Some(u) => u,
             None => return Ok(ModuleResult::NotHandled),
@@ -296,22 +466,40 @@ impl Module for DlineModule {
 
         match message.command {
             MessageType::Custom(ref cmd) if cmd == "DLINE" => {
-                self.handle_dline(client, user, &message.params).await?;
+                self.handle_dline(client, user, &message.params, context).await?;
                 Ok(ModuleResult::Handled)
             }
             MessageType::Custom(ref cmd) if cmd == "UNDLINE" => {
-                self.handle_undline(client, user, &message.params).await?;
+                self.handle_undline(client, user, &message.params, context).await?;
                 Ok(ModuleResult::Handled)
             }
             _ => Ok(ModuleResult::NotHandled),
         }
     }
 
-    async fn handle_server_message(&mut self, _server: &str, _message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
-        Ok(ModuleResult::NotHandled)
+    async fn handle_server_message(&mut self, server: &str, message: &Message, context: &ModuleContext) -> Result<ModuleResult> {
+        match message.command {
+            MessageType::Custom(ref cmd) if cmd == "DLINE" => {
+                self.handle_server_dline(server, &message.params, context).await?;
+                Ok(ModuleResult::Handled)
+            }
+            MessageType::Custom(ref cmd) if cmd == "UNDLINE" => {
+                self.handle_server_undline(server, &message.params, context).await?;
+                Ok(ModuleResult::Handled)
+            }
+            _ => Ok(ModuleResult::NotHandled),
+        }
     }
 
-    async fn handle_user_registration(&mut self, _user: &User, _context: &ModuleContext) -> Result<()> {
+    async fn handle_user_registration(&mut self, user: &User, _context: &ModuleContext) -> Result<()> {
+        // Check if the user matches any active DLINEs
+        if let Some(ban_reason) = self.check_user_dline(user).await {
+            // User is banned, we need to disconnect them
+            // This would need access to the server's client management system
+            info!("User {} blocked by DLINE: {}", user.nickname(), ban_reason);
+            // TODO: Implement actual user disconnection when server context is available
+            return Err(Error::PermissionDenied(format!("Banned: {}", ban_reason)));
+        }
         Ok(())
     }
 
@@ -320,15 +508,20 @@ impl Module for DlineModule {
     }
 
     fn get_capabilities(&self) -> Vec<String> {
-        vec!["message_handler".to_string()]
+        vec!["message_handler".to_string(), "user_registration_handler".to_string(), "server_message_handler".to_string()]
     }
 
     fn supports_capability(&self, capability: &str) -> bool {
-        capability == "message_handler"
+        capability == "message_handler" || capability == "user_registration_handler" || capability == "server_message_handler"
     }
 
     fn get_numeric_replies(&self) -> Vec<u16> {
-        vec![]
+        vec![
+            NumericReply::RplDline.numeric_code(),
+            NumericReply::RplEndOfDlines.numeric_code(),
+            NumericReply::ErrNoSuchDline.numeric_code(),
+            NumericReply::ErrInvalidDuration.numeric_code(),
+        ]
     }
 
     fn handles_numeric_reply(&self, _numeric: u16) -> bool {

@@ -1,6 +1,7 @@
 //! Example service implementation
 
 use crate::{Service, ServiceResult};
+use crate::framework::ServiceContext;
 use rustircd_core::{Client, Message, User, Result};
 use async_trait::async_trait;
 
@@ -45,7 +46,7 @@ impl Service for ExampleService {
         Ok(())
     }
     
-    async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ServiceResult> {
+    async fn handle_message(&mut self, client: &Client, message: &Message, _context: &ServiceContext) -> Result<ServiceResult> {
         // Example: Handle custom service commands
         if let rustircd_core::MessageType::Custom(cmd) = &message.command {
             match cmd.as_str() {
@@ -64,16 +65,16 @@ impl Service for ExampleService {
         }
     }
     
-    async fn handle_server_message(&mut self, _server: &str, _message: &Message) -> Result<ServiceResult> {
+    async fn handle_server_message(&mut self, _server: &str, _message: &Message, _context: &ServiceContext) -> Result<ServiceResult> {
         Ok(ServiceResult::NotHandled)
     }
     
-    async fn handle_user_registration(&mut self, user: &User) -> Result<()> {
+    async fn handle_user_registration(&mut self, user: &User, _context: &ServiceContext) -> Result<()> {
         tracing::info!("User {} registered (example service)", user.nick);
         Ok(())
     }
     
-    async fn handle_user_disconnection(&mut self, user: &User) -> Result<()> {
+    async fn handle_user_disconnection(&mut self, user: &User, _context: &ServiceContext) -> Result<()> {
         tracing::info!("User {} disconnected (example service)", user.nick);
         Ok(())
     }

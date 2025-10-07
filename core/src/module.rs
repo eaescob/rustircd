@@ -1,8 +1,125 @@
 //! Module system for extensible IRC daemon
 
-use crate::{Client, Message, User, Result, ModuleNumericManager};
+use crate::{Client, Message, User, Result, ModuleNumericManager, Database, ServerConnectionManager, ChannelInfo, Config};
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use uuid::Uuid;
+
+/// Context provided to modules for database and server access
+pub struct ModuleContext {
+    pub database: Arc<Database>,
+    pub server_connections: Arc<ServerConnectionManager>,
+    /// Client connection manager for sending messages to users
+    pub client_connections: Arc<RwLock<HashMap<Uuid, Arc<Client>>>>,
+}
+
+impl ModuleContext {
+    pub fn new(database: Arc<Database>, server_connections: Arc<ServerConnectionManager>) -> Self {
+        Self {
+            database,
+            server_connections,
+            client_connections: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+    
+    /// Add a user to the database
+    pub fn add_user(&self, user: User) -> Result<()> {
+        self.database.add_user(user)
+    }
+    
+    /// Get a user by nickname
+    pub fn get_user_by_nick(&self, nick: &str) -> Option<User> {
+        self.database.get_user_by_nick(nick)
+    }
+    
+    /// Update a user in the database
+    pub fn update_user(&self, user: User) -> Result<()> {
+        let user_id = user.id.clone();
+        self.database.update_user(&user_id, user)
+    }
+    
+    /// Remove a user from the database
+    pub fn remove_user(&self, user_id: Uuid) -> Result<Option<User>> {
+        self.database.remove_user(user_id)
+    }
+    
+    /// Add a channel to the database
+    pub fn add_channel(&self, channel: ChannelInfo) -> Result<()> {
+        self.database.add_channel(channel)
+    }
+    
+    /// Get channel users
+    pub fn get_channel_users(&self, name: &str) -> Vec<String> {
+        self.database.get_channel_users(name)
+    }
+    
+    /// Remove a channel from the database
+    pub fn remove_channel(&self, name: &str) -> Option<ChannelInfo> {
+        self.database.remove_channel(name)
+    }
+    
+    /// Add a user to a channel
+    pub fn add_user_to_channel(&self, nick: &str, channel: &str) -> Result<()> {
+        self.database.add_user_to_channel(nick, channel)
+    }
+    
+    /// Remove a user from a channel
+    pub fn remove_user_from_channel(&self, nick: &str, channel: &str) -> Result<()> {
+        self.database.remove_user_from_channel(nick, channel)
+    }
+    
+    /// Broadcast a message to all servers
+    pub async fn broadcast_to_servers(&self, message: Message) -> Result<()> {
+        self.server_connections.broadcast_to_servers(message).await
+    }
+    
+    /// Send a message to a specific server
+    pub async fn send_to_server(&self, server_name: &str, message: Message) -> Result<()> {
+        self.server_connections.send_to_server(server_name, message).await
+    }
+    
+    /// Send a message to a specific user
+    pub async fn send_to_user(&self, nick: &str, message: Message) -> Result<()> {
+        if let Some(user) = self.get_user_by_nick(nick) {
+            let client_connections = self.client_connections.read().await;
+            if let Some(client) = client_connections.get(&user.id) {
+                client.send(message)?;
+            }
+        }
+        Ok(())
+    }
+    
+    /// Send a message to a channel
+    pub async fn send_to_channel(&self, channel: &str, message: Message) -> Result<()> {
+        let channel_users = self.get_channel_users(channel);
+        let client_connections = self.client_connections.read().await;
+        
+        for nick in channel_users {
+            if let Some(user) = self.get_user_by_nick(&nick) {
+                if let Some(client) = client_connections.get(&user.id) {
+                    let _ = client.send(message.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    /// Register a client connection for a user
+    pub async fn register_client(&self, user_id: Uuid, client: Arc<Client>) -> Result<()> {
+        let mut client_connections = self.client_connections.write().await;
+        client_connections.insert(user_id, client);
+        Ok(())
+    }
+    
+    /// Unregister a client connection for a user
+    pub async fn unregister_client(&self, user_id: Uuid) -> Result<()> {
+        let mut client_connections = self.client_connections.write().await;
+        client_connections.remove(&user_id);
+        Ok(())
+    }
+}
 
 /// Module trait that all modules must implement
 #[async_trait]
@@ -23,22 +140,22 @@ pub trait Module: Send + Sync {
     async fn cleanup(&mut self) -> Result<()>;
     
     /// Handle a message from a client
-    async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ModuleResult>;
+    async fn handle_message(&mut self, client: &Client, message: &Message, context: &ModuleContext) -> Result<ModuleResult>;
     
     /// Handle a message from a client with server reference
-    async fn handle_message_with_server(&mut self, client: &Client, message: &Message, _server: Option<&crate::Server>) -> Result<ModuleResult> {
+    async fn handle_message_with_server(&mut self, client: &Client, message: &Message, _server: Option<&crate::Server>, context: &ModuleContext) -> Result<ModuleResult> {
         // Default implementation calls the original method
-        self.handle_message(client, message).await
+        self.handle_message(client, message, context).await
     }
     
     /// Handle a message from a server
-    async fn handle_server_message(&mut self, server: &str, message: &Message) -> Result<ModuleResult>;
+    async fn handle_server_message(&mut self, server: &str, message: &Message, context: &ModuleContext) -> Result<ModuleResult>;
     
     /// Handle user registration
-    async fn handle_user_registration(&mut self, user: &User) -> Result<()>;
+    async fn handle_user_registration(&mut self, user: &User, context: &ModuleContext) -> Result<()>;
     
     /// Handle user disconnection
-    async fn handle_user_disconnection(&mut self, user: &User) -> Result<()>;
+    async fn handle_user_disconnection(&mut self, user: &User, context: &ModuleContext) -> Result<()>;
     
     
     /// Get module capabilities
@@ -96,16 +213,18 @@ pub struct ModuleManager {
     message_handlers: Vec<String>,
     server_message_handlers: Vec<String>,
     user_handlers: Vec<String>,
+    context: ModuleContext,
 }
 
 impl ModuleManager {
     /// Create a new module manager
-    pub fn new() -> Self {
+    pub fn new(database: Arc<Database>, server_connections: Arc<ServerConnectionManager>) -> Self {
         Self {
             modules: HashMap::new(),
             message_handlers: Vec::new(),
             server_message_handlers: Vec::new(),
             user_handlers: Vec::new(),
+            context: ModuleContext::new(database, server_connections),
         }
     }
     
@@ -172,7 +291,7 @@ impl ModuleManager {
     pub async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ModuleResult> {
         for module_name in &self.message_handlers {
             if let Some(module) = self.modules.get_mut(module_name) {
-                match module.handle_message(client, message).await {
+                match module.handle_message(client, message, &self.context).await {
                     Ok(ModuleResult::HandledStop) => return Ok(ModuleResult::HandledStop),
                     Ok(ModuleResult::Rejected(reason)) => return Ok(ModuleResult::Rejected(reason)),
                     Ok(ModuleResult::Handled) => return Ok(ModuleResult::Handled),
@@ -192,7 +311,7 @@ impl ModuleManager {
     pub async fn handle_message_with_server(&mut self, client: &Client, message: &Message, server: Option<&crate::Server>) -> Result<ModuleResult> {
         for module_name in &self.message_handlers {
             if let Some(module) = self.modules.get_mut(module_name) {
-                match module.handle_message_with_server(client, message, server).await {
+                match module.handle_message_with_server(client, message, server, &self.context).await {
                     Ok(ModuleResult::HandledStop) => return Ok(ModuleResult::HandledStop),
                     Ok(ModuleResult::Rejected(reason)) => return Ok(ModuleResult::Rejected(reason)),
                     Ok(ModuleResult::Handled) => return Ok(ModuleResult::Handled),
@@ -212,7 +331,7 @@ impl ModuleManager {
     pub async fn handle_server_message(&mut self, server: &str, message: &Message) -> Result<ModuleResult> {
         for module_name in &self.server_message_handlers {
             if let Some(module) = self.modules.get_mut(module_name) {
-                match module.handle_server_message(server, message).await {
+                match module.handle_server_message(server, message, &self.context).await {
                     Ok(ModuleResult::HandledStop) => return Ok(ModuleResult::HandledStop),
                     Ok(ModuleResult::Rejected(reason)) => return Ok(ModuleResult::Rejected(reason)),
                     Ok(ModuleResult::Handled) => return Ok(ModuleResult::Handled),
@@ -232,7 +351,7 @@ impl ModuleManager {
     pub async fn handle_user_registration(&mut self, user: &User) -> Result<()> {
         for module_name in &self.user_handlers {
             if let Some(module) = self.modules.get_mut(module_name) {
-                if let Err(e) = module.handle_user_registration(user).await {
+                if let Err(e) = module.handle_user_registration(user, &self.context).await {
                     tracing::error!("Error in module {}: {}", module_name, e);
                 }
             }
@@ -244,7 +363,7 @@ impl ModuleManager {
     pub async fn handle_user_disconnection(&mut self, user: &User) -> Result<()> {
         for module_name in &self.user_handlers {
             if let Some(module) = self.modules.get_mut(module_name) {
-                if let Err(e) = module.handle_user_disconnection(user).await {
+                if let Err(e) = module.handle_user_disconnection(user, &self.context).await {
                     tracing::error!("Error in module {}: {}", module_name, e);
                 }
             }
@@ -299,6 +418,12 @@ impl ModuleManager {
 
 impl Default for ModuleManager {
     fn default() -> Self {
-        Self::new()
+        // This is a placeholder - in practice, ModuleManager should be created with proper database and server connections
+        // For now, we'll create dummy Arc references, but this should be fixed in actual usage
+        use std::sync::Arc;
+        let database = Arc::new(Database::new(1000, 30)); // max_history_size: 1000, history_retention_days: 30
+        let config = Arc::new(Config::default());
+        let server_connections = Arc::new(ServerConnectionManager::new(config));
+        Self::new(database, server_connections)
     }
 }

@@ -6,7 +6,7 @@
 //! 
 //! Based on: https://github.com/solanum-ircd/solanum/blob/main/extensions/m_opme.c
 
-use crate::core::{User, Message, Client, Result, Error, NumericReply, Config};
+use rustircd_core::{User, Message, Client, Result, Error, NumericReply, Config};
 use std::collections::HashSet;
 use uuid::Uuid;
 use async_trait::async_trait;
@@ -79,8 +79,7 @@ impl OpmeModule {
     /// Handle OPME command
     pub async fn handle_opme(&self, client: &Client, message: &Message, config: &Config) -> Result<()> {
         if !self.config.enabled {
-            let error_msg = NumericReply::unknown_command(&message.command);
-            let _ = client.send(error_msg);
+            client.send_numeric(NumericReply::ErrUnknownCommand, &["OPME"])?;
             return Ok(());
         }
         
@@ -89,8 +88,7 @@ impl OpmeModule {
         
         // Check if user has operator privileges (if required)
         if self.config.require_oper && !user.is_operator() {
-            let error_msg = NumericReply::no_privileges();
-            let _ = client.send(error_msg);
+            client.send_numeric(NumericReply::ErrNoPrivileges, &["Insufficient privileges"])?;
             return Ok(());
         }
         
@@ -105,16 +103,14 @@ impl OpmeModule {
         
         // Validate channel name
         if !self.is_valid_channel_name(&channel) {
-            let error_msg = NumericReply::err_no_such_channel(&channel);
-            let _ = client.send(error_msg);
+            client.send_numeric(NumericReply::ErrNoSuchChannel, &[&channel, "No such channel"])?;
             return Ok(());
         }
         
         // Check rate limiting
         if self.config.rate_limit.enabled {
             if let Err(e) = self.check_rate_limit(user.id, &channel).await {
-                let error_msg = NumericReply::err_too_many_targets(&channel, "You are using OPME too frequently");
-                let _ = client.send(error_msg);
+                client.send_numeric(NumericReply::ErrTooManyTargets, &["Rate limit exceeded"])?;
                 return Ok(());
             }
         }
@@ -128,7 +124,7 @@ impl OpmeModule {
         }
         
         // Send success message
-        let success_msg = NumericReply::raw(381, &format!(":You are now an operator in {}", channel));
+        let success_msg = NumericReply::RplYoureOper.reply("", vec![format!("You are now an operator in {}", channel)]);
         let _ = client.send(success_msg);
         
         // Notify channel if configured

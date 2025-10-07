@@ -3,7 +3,7 @@
 //! This module provides SASL authentication support as per IRCv3 specification.
 //! It supports various SASL mechanisms including PLAIN, EXTERNAL, and SCRAM-SHA-256.
 
-use crate::core::{User, Message, Client, Result, Error, NumericReply, Config};
+use rustircd_core::{User, Message, Client, Result, Error, NumericReply, Config, MessageType};
 use std::collections::HashMap;
 use uuid::Uuid;
 use async_trait::async_trait;
@@ -173,10 +173,10 @@ impl SaslMechanism for PlainMechanism {
     async fn step(&self, _client: &Client, data: &str) -> Result<SaslResponse> {
         // Decode base64 data
         let decoded = general_purpose::STANDARD.decode(data)
-            .map_err(|_| Error::InvalidInput("Invalid base64 data".to_string()))?;
+            .map_err(|_| Error::MessageParse("Invalid base64 data".to_string()))?;
         
         let auth_string = String::from_utf8(decoded)
-            .map_err(|_| Error::InvalidInput("Invalid UTF-8 data".to_string()))?;
+            .map_err(|_| Error::MessageParse("Invalid UTF-8 data".to_string()))?;
         
         // Parse auth string: authzid\0username\0password
         let parts: Vec<&str> = auth_string.split('\0').collect();
@@ -286,16 +286,14 @@ impl SaslModule {
     /// Handle SASL authentication
     pub async fn handle_sasl(&self, client: &Client, message: &Message) -> Result<()> {
         if !self.config.enabled {
-            let error_msg = NumericReply::unknown_command(&message.command);
-            let _ = client.send(error_msg);
+            client.send_numeric(NumericReply::ErrUnknownCommand, &["SASL"])?;
             return Ok(());
         }
         
-        match message.command.as_str() {
-            "AUTHENTICATE" => self.handle_authenticate(client, message).await,
+        match &message.command {
+            MessageType::Custom(cmd) if cmd == "AUTHENTICATE" => self.handle_authenticate(client, message).await,
             _ => {
-                let error_msg = NumericReply::unknown_command(&message.command);
-                let _ = client.send(error_msg);
+                client.send_numeric(NumericReply::ErrUnknownCommand, &["SASL"])?;
                 Ok(())
             }
         }
@@ -304,7 +302,7 @@ impl SaslModule {
     /// Handle AUTHENTICATE command
     async fn handle_authenticate(&self, client: &Client, message: &Message) -> Result<()> {
         if message.params.is_empty() {
-            let error_msg = NumericReply::need_more_params(&message.command);
+            let error_msg = NumericReply::need_more_params("AUTHENTICATE");
             let _ = client.send(error_msg);
             return Ok(());
         }
@@ -313,7 +311,7 @@ impl SaslModule {
         
         // Check if mechanism is supported
         if !self.is_mechanism_supported(mechanism) {
-            let error_msg = NumericReply::raw(904, &format!(":SASL authentication failed: mechanism '{}' not supported", mechanism));
+            let error_msg = NumericReply::ErrUnknownCommand.reply("", vec![format!("SASL authentication failed: mechanism '{}' not supported", mechanism)]);
             let _ = client.send(error_msg);
             return Ok(());
         }
@@ -336,34 +334,34 @@ impl SaslModule {
         if let Some(mechanism_impl) = self.get_mechanism(mechanism) {
             let initial_data = if message.params.len() > 1 { Some(&message.params[1]) } else { None };
             
-            match mechanism_impl.start(client, initial_data).await {
+            match mechanism_impl.start(client, initial_data.map(|x| x.as_str())).await {
                 Ok(response) => {
                     match response.response_type {
                         SaslResponseType::Continue => {
-                            let continue_msg = NumericReply::raw(334, "+");
+                            let continue_msg = NumericReply::RplAway.reply("", vec!["+".to_string()]);
                             let _ = client.send(continue_msg);
                         }
                         SaslResponseType::Success => {
                             self.complete_authentication(client, mechanism_impl).await?;
                         }
                         SaslResponseType::Failure => {
-                            let error_msg = NumericReply::raw(904, &format!(":SASL authentication failed: {}", 
-                                response.error.unwrap_or_else(|| "Unknown error".to_string())));
+                            let error_msg = NumericReply::ErrUnknownCommand.reply("", vec![format!("SASL authentication failed: {}", 
+                                response.error.unwrap_or_else(|| "Unknown error".to_string()))]);
                             let _ = client.send(error_msg);
                         }
                         SaslResponseType::Challenge => {
                             if let Some(data) = response.data {
-                                let challenge_msg = NumericReply::raw(334, &data);
+                                let challenge_msg = NumericReply::RplAway.reply("", vec![data.to_string()]);
                                 let _ = client.send(challenge_msg);
                             } else {
-                                let continue_msg = NumericReply::raw(334, "+");
+                                let continue_msg = NumericReply::RplAway.reply("", vec!["+".to_string()]);
                                 let _ = client.send(continue_msg);
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    let error_msg = NumericReply::raw(904, &format!(":SASL authentication failed: {}", e));
+                    let error_msg = NumericReply::ErrUnknownCommand.reply("", vec![format!("SASL authentication failed: {}", e)]);
                     let _ = client.send(error_msg);
                 }
             }
@@ -385,13 +383,13 @@ impl SaslModule {
                 }
                 
                 // Send success message
-                let success_msg = NumericReply::raw(903, ":SASL authentication successful");
+                let success_msg = NumericReply::RplYoureOper.reply("", vec!["SASL authentication successful".to_string()]);
                 let _ = client.send(success_msg);
                 
                 tracing::info!("SASL authentication successful for client {}", client.id);
             }
             Err(e) => {
-                let error_msg = NumericReply::raw(904, &format!(":SASL authentication failed: {}", e));
+                let error_msg = NumericReply::ErrUnknownCommand.reply("", vec![format!("SASL authentication failed: {}", e)]);
                 let _ = client.send(error_msg);
             }
         }
@@ -466,51 +464,4 @@ impl SaslCapabilityExtension {
     }
 }
 
-#[async_trait]
-impl crate::core::extensions::CapabilityExtension for SaslCapabilityExtension {
-    fn get_capabilities(&self) -> Vec<String> {
-        vec!["sasl".to_string()]
-    }
-    
-    fn supports_capability(&self, capability: &str) -> bool {
-        capability == "sasl"
-    }
-    
-    async fn handle_capability_negotiation(&self, client: &Client, capability: &str, action: crate::core::extensions::CapabilityAction) -> Result<crate::core::extensions::CapabilityResult> {
-        if capability != "sasl" {
-            return Ok(crate::core::extensions::CapabilityResult::NotSupported);
-        }
-        
-        match action {
-            crate::core::extensions::CapabilityAction::List => {
-                let mechanisms = self.sasl_module.get_supported_mechanisms();
-                Ok(crate::core::extensions::CapabilityResult::CustomResponse(
-                    format!("sasl={}", mechanisms.join(","))
-                ))
-            }
-            crate::core::extensions::CapabilityAction::Request(_) => {
-                Ok(crate::core::extensions::CapabilityResult::Supported)
-            }
-            crate::core::extensions::CapabilityAction::Acknowledge(_) => {
-                Ok(crate::core::extensions::CapabilityResult::Supported)
-            }
-            crate::core::extensions::CapabilityAction::End => {
-                Ok(crate::core::extensions::CapabilityResult::Supported)
-            }
-        }
-    }
-    
-    async fn on_capabilities_enabled(&self, _client: &Client, capabilities: &[String]) -> Result<()> {
-        if capabilities.contains(&"sasl".to_string()) {
-            tracing::info!("SASL capability enabled for client");
-        }
-        Ok(())
-    }
-    
-    async fn on_capabilities_disabled(&self, _client: &Client, capabilities: &[String]) -> Result<()> {
-        if capabilities.contains(&"sasl".to_string()) {
-            tracing::info!("SASL capability disabled for client");
-        }
-        Ok(())
-    }
-}
+// Extension implementation removed - extensions system was removed

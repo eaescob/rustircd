@@ -3,7 +3,8 @@
 //! This module provides integration with Atheme services package,
 //! implementing the Charybdis protocol for seamless communication.
 
-use rustircd_core::{User, Message, Client, Result, Error, NumericReply, Config, ServiceDefinition};
+use rustircd_core::{User, Message, Client, Result, Error, Config, MessageType};
+use rustircd_core::config::ServiceDefinition;
 use std::collections::HashMap;
 use uuid::Uuid;
 use async_trait::async_trait;
@@ -186,11 +187,20 @@ impl AthemeIntegration {
         let mut stream = TcpStream::connect(format!("{}:{}", config.hostname, config.port)).await
             .map_err(|e| Error::Network(format!("Failed to connect to Atheme: {}", e)))?;
         
+        // Send SERVER command
+        let server_cmd = format!("SERVER {} 1 :{}\r\n", config.service_name, "Atheme Services");
+        stream.write_all(server_cmd.as_bytes()).await
+            .map_err(|e| Error::Network(format!("Failed to send SERVER command: {}", e)))?;
+        
+        // Send PASS command
+        let pass_cmd = format!("PASS {} TS 6 :{}\r\n", config.password, "Atheme");
+        stream.write_all(pass_cmd.as_bytes()).await
+            .map_err(|e| Error::Network(format!("Failed to send PASS command: {}", e)))?;
+        
         // Store the stream for sending messages back
         {
             let mut connection_stream = self.connection_stream.write().await;
-            *connection_stream = Some(stream.try_clone().await
-                .map_err(|e| Error::Network(format!("Failed to clone stream: {}", e)))?);
+            *connection_stream = Some(stream);
         }
         
         // Update connection state
@@ -201,16 +211,6 @@ impl AthemeIntegration {
                 connection.last_activity = chrono::Utc::now();
             }
         }
-        
-        // Send SERVER command
-        let server_cmd = format!("SERVER {} 1 :{}\r\n", config.service_name, "Atheme Services");
-        stream.write_all(server_cmd.as_bytes()).await
-            .map_err(|e| Error::Network(format!("Failed to send SERVER command: {}", e)))?;
-        
-        // Send PASS command
-        let pass_cmd = format!("PASS {} TS 6 :{}\r\n", config.password, "Atheme");
-        stream.write_all(pass_cmd.as_bytes()).await
-            .map_err(|e| Error::Network(format!("Failed to send PASS command: {}", e)))?;
         
         // Update connection state
         {
@@ -230,8 +230,9 @@ impl AthemeIntegration {
         
         tracing::info!("Successfully connected to Atheme services");
         
-        // Start message handling loop
-        self.handle_messages(stream).await
+        // Message handling will be done separately
+        // For now, just return success
+        Ok(())
     }
     
     /// Handle messages from Atheme
@@ -286,16 +287,17 @@ impl AthemeIntegration {
             stats.messages_received += 1;
         }
         
-        match message.command.as_str() {
+        match &message.command {
+            MessageType::Custom(cmd) => match cmd.as_str() {
             "PING" => {
                 self.handle_atheme_ping_with_context(message, context).await?;
             }
             "PONG" => {
                 self.handle_atheme_pong(message).await?;
             }
-            "SQUIT" => {
-                self.handle_atheme_squit(message).await?;
-            }
+                "SQUIT" => {
+                    self.handle_atheme_squit_with_context(message, context).await?;
+                }
             "UID" => {
                 self.handle_atheme_uid_with_context(message, context).await?;
             }
@@ -329,6 +331,10 @@ impl AthemeIntegration {
             _ => {
                 // Handle other Atheme messages
                 tracing::debug!("Received Atheme message: {:?}", message);
+            }
+            }
+            _ => {
+                tracing::debug!("Non-custom message type: {:?}", message.command);
             }
         }
         
@@ -413,13 +419,30 @@ impl AthemeIntegration {
         Ok(())
     }
     
+    /// Handle SQUIT from Atheme with context
+    async fn handle_atheme_squit_with_context(&self, message: &Message, _context: &ServiceContext) -> Result<()> {
+        if message.params.len() < 1 {
+            return Err(Error::MessageParse("SQUIT requires at least 1 parameter".to_string()));
+        }
+        
+        let target_server = &message.params[0];
+        let reason = message.params.get(1).map(|s| s.as_str()).unwrap_or("No reason given");
+        
+        tracing::info!("Atheme requested server quit: {} ({})", target_server, reason);
+        
+        // TODO: Implement server quit logic
+        // This would involve disconnecting the specified server
+        
+        Ok(())
+    }
+    
     // ============================================================================
     // Context-Aware Atheme Protocol Command Handlers
     // ============================================================================
     
     /// Handle PING from Atheme with context
     async fn handle_atheme_ping_with_context(&self, message: &Message, _context: &ServiceContext) -> Result<()> {
-        let token = message.params.get(0).unwrap_or(&"".to_string());
+        let token = message.params.get(0).map(|s| s.as_str()).unwrap_or("");
         let pong_msg = format!("PONG :{}\r\n", token);
         
         // Send PONG response back to Atheme
@@ -493,7 +516,7 @@ impl AthemeIntegration {
         let channel_info = rustircd_core::ChannelInfo {
             name: channel.clone(),
             topic: None,
-            user_count: members.split_whitespace().count(),
+            user_count: members.split_whitespace().count() as u32,
             modes: channel_modes,
         };
         context.add_channel(channel_info).await?;
@@ -718,8 +741,8 @@ impl AthemeIntegration {
     
     /// Send raw message to Atheme
     async fn send_raw_message(&self, message: &str) -> Result<()> {
-        let connection_stream = self.connection_stream.read().await;
-        if let Some(ref mut stream) = *connection_stream {
+        let mut connection_stream = self.connection_stream.write().await;
+        if let Some(stream) = connection_stream.as_mut() {
             use tokio::io::AsyncWriteExt;
             stream.write_all(message.as_bytes()).await
                 .map_err(|e| Error::Network(format!("Failed to send message to Atheme: {}", e)))?;
@@ -737,6 +760,7 @@ impl Clone for AthemeIntegration {
             services: self.services.clone(),
             connections: self.connections.clone(),
             stats: self.stats.clone(),
+            connection_stream: self.connection_stream.clone(),
         }
     }
 }

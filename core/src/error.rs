@@ -32,6 +32,9 @@ pub enum Error {
     #[error("Server error: {0}")]
     Server(String),
     
+    #[error("Network error: {0}")]
+    Network(String),
+    
     #[error("TLS error: {0}")]
     Tls(#[from] rustls::Error),
     

@@ -3,10 +3,10 @@
 use crate::{
     User, Message, MessageType, NumericReply, Config, ModuleManager,
     connection::ConnectionHandler, Error, Result, module::{ModuleResult, ModuleStatsResponse}, client::{Client, ClientState},
-    Database, BroadcastSystem, NetworkQueryManager, NetworkMessageHandler, ExtensionManager,
+    Database, BroadcastSystem, NetworkQueryManager, NetworkMessageHandler,
     ServerConnectionManager, ServerConnection, Prefix,
-    CoreUserBurstExtension, CoreServerBurstExtension, ThrottlingManager, StatisticsManager, MotdManager,
-    extensions::BurstType, LookupService, RehashService,
+    ThrottlingManager, StatisticsManager, MotdManager,
+    LookupService, RehashService,
 };
 use chrono::Utc;
 use std::collections::{HashMap, HashSet};
@@ -41,8 +41,6 @@ pub struct Server {
     network_query_manager: Arc<NetworkQueryManager>,
     /// Network message handler
     network_message_handler: Arc<NetworkMessageHandler>,
-    /// Extension manager for IRCv3 capabilities
-    extension_manager: Arc<ExtensionManager>,
     /// Server connection manager
     server_connections: Arc<ServerConnectionManager>,
     /// Throttling manager for connection rate limiting
@@ -116,35 +114,6 @@ impl Server {
             network_query_manager.clone(),
         ));
 
-        // Initialize extension manager
-        let extension_manager = Arc::new(ExtensionManager::new());
-        
-        // Register core burst extensions
-        let user_burst_extension = Box::new(CoreUserBurstExtension::new(
-            database.clone(),
-            config.server.name.clone(),
-        ));
-        let server_burst_extension = Box::new(CoreServerBurstExtension::new(
-            config.server.name.clone(),
-            config.server.description.clone(),
-            config.server.version.clone(),
-        ));
-        
-        // Register extensions (we need to clone the Arc to access it)
-        let extension_manager_clone = extension_manager.clone();
-        tokio::spawn(async move {
-            if let Err(e) = extension_manager_clone.register_burst_extension(user_burst_extension).await {
-                tracing::error!("Failed to register user burst extension: {}", e);
-            }
-            if let Err(e) = extension_manager_clone.register_burst_extension(server_burst_extension).await {
-                tracing::error!("Failed to register server burst extension: {}", e);
-            }
-            
-            // Register channel burst extension if channel module is enabled
-            // Note: This will be fully integrated when the channel module is properly loaded
-            // For now, we register a placeholder that can be replaced when the module is active
-            tracing::info!("Channel burst extension registration prepared");
-        });
         
         // Initialize server connection manager
         let server_connections = Arc::new(ServerConnectionManager::new(Arc::new(config.clone())));
@@ -185,7 +154,7 @@ impl Server {
         
         Self {
             config: config.clone(),
-            module_manager: Arc::new(RwLock::new(ModuleManager::new())),
+            module_manager: Arc::new(RwLock::new(ModuleManager::new(database.clone(), server_connections.clone()))),
             connection_handler: Arc::new(RwLock::new(connection_handler)),
             users: Arc::new(RwLock::new(HashMap::new())),
             nick_to_id: Arc::new(RwLock::new(HashMap::new())),
@@ -194,7 +163,6 @@ impl Server {
             broadcast_system,
             network_query_manager,
             network_message_handler,
-            extension_manager,
             server_connections,
             throttling_manager,
             statistics_manager,
@@ -574,107 +542,24 @@ impl Server {
     async fn send_server_burst(&self, target_server: &str) -> Result<()> {
         tracing::info!("Sending server burst to {}", target_server);
         
-        // Use extension system to prepare burst messages
-        let extension_manager = &*self.extension_manager;
-        
-        // Stage 1: Send user burst
-        self.send_user_burst(target_server, &extension_manager).await?;
-        
-        // Stage 2: Send channel burst  
-        self.send_channel_burst(target_server, &extension_manager).await?;
-        
-        // Stage 3: Send other server information
-        self.send_other_burst(target_server, &extension_manager).await?;
-        
-        // Stage 4: Send module-specific bursts
-        self.send_module_bursts(target_server, &extension_manager).await?;
+        // TODO: Implement server burst without extensions
+        // For now, just send basic server information
+        let server_info = Message::with_prefix(
+            Prefix::Server(self.config.server.name.clone()),
+            MessageType::Server,
+            vec![
+                self.config.server.name.clone(),
+                "1".to_string(), // hop count
+                self.config.server.description.clone(),
+                self.config.server.version.clone(),
+            ]
+        );
+        self.server_connections.send_to_server(target_server, server_info).await?;
         
         tracing::info!("Server burst to {} completed", target_server);
         Ok(())
     }
     
-    /// Send user burst - propagate all local users
-    async fn send_user_burst(&self, target_server: &str, extension_manager: &crate::extensions::ExtensionManager) -> Result<()> {
-        tracing::debug!("Sending user burst to {}", target_server);
-        
-        // Get user burst messages from extensions
-        let burst_type = crate::extensions::BurstType::User;
-        let messages = extension_manager.prepare_burst(target_server, &burst_type).await?;
-        
-        // Send all user burst messages
-        for message in messages {
-            self.server_connections.send_to_server(target_server, message).await?;
-        }
-        
-        tracing::debug!("Sent user burst to {}", target_server);
-        Ok(())
-    }
-    
-    /// Send channel burst - propagate all local channels
-    async fn send_channel_burst(&self, target_server: &str, extension_manager: &crate::extensions::ExtensionManager) -> Result<()> {
-        tracing::debug!("Sending channel burst to {}", target_server);
-        
-        // Get channel burst messages from extensions
-        let burst_type = crate::extensions::BurstType::Channel;
-        let messages = extension_manager.prepare_burst(target_server, &burst_type).await?;
-        
-        // Send all channel burst messages
-        for message in messages {
-            self.server_connections.send_to_server(target_server, message).await?;
-        }
-        
-        tracing::debug!("Sent channel burst to {}", target_server);
-        Ok(())
-    }
-    
-    /// Send other burst - propagate server information and other state
-    async fn send_other_burst(&self, target_server: &str, extension_manager: &crate::extensions::ExtensionManager) -> Result<()> {
-        tracing::debug!("Sending other burst to {}", target_server);
-        
-        // Get server burst messages from extensions
-        let burst_type = crate::extensions::BurstType::Server;
-        let mut messages = extension_manager.prepare_burst(target_server, &burst_type).await?;
-        
-        // Add core server information if no extensions provided it
-        if messages.is_empty() {
-            let server_burst = Message::new(
-                MessageType::ServerBurst,
-                vec![
-                    self.config.server.name.clone(),
-                    self.config.server.description.clone(),
-                    "1".to_string(), // hop count
-                    self.config.server.version.clone(),
-                ]
-            );
-            messages.push(server_burst);
-        }
-        
-        // Send all server burst messages
-        for message in messages {
-            self.server_connections.send_to_server(target_server, message).await?;
-        }
-        
-        tracing::debug!("Sent other burst to {}", target_server);
-        Ok(())
-    }
-    
-    /// Send module-specific bursts
-    async fn send_module_bursts(&self, target_server: &str, extension_manager: &crate::extensions::ExtensionManager) -> Result<()> {
-        tracing::debug!("Sending module bursts to {}", target_server);
-        
-        // For now, we'll use the prepare_burst method for module-specific burst types
-        // This is a simplified approach - in a full implementation, we'd need to iterate through extensions
-        
-        // Send any module-specific bursts
-        let module_burst_type = crate::extensions::BurstType::Module("core".to_string());
-        let messages = extension_manager.prepare_burst(target_server, &module_burst_type).await?;
-        for message in messages {
-            self.server_connections.send_to_server(target_server, message).await?;
-        }
-        
-        tracing::debug!("Sent module bursts to {}", target_server);
-        Ok(())
-    }
     
     /// Handle server PING
     async fn handle_server_ping(&self, server_name: &str, message: Message) -> Result<()> {
@@ -998,10 +883,9 @@ impl Server {
         
         tracing::debug!("Received user burst from server {}: {}!{}@{}", server_name, nick, user, host);
         
-        // Process through extension system
-        let extension_manager = &*self.extension_manager;
-        let burst_type = crate::extensions::BurstType::User;
-        extension_manager.process_burst(server_name, &burst_type, &[message]).await?;
+        // TODO: Process user burst without extensions
+        // For now, just log the received user burst
+        tracing::debug!("Processed user burst from {}: {}!{}@{}", server_name, nick, user, host);
         
         Ok(())
     }
@@ -1019,10 +903,9 @@ impl Server {
         
         tracing::debug!("Received server burst from server {}: {} (hop: {})", server_name, server_name_burst, hop_count);
         
-        // Process through extension system
-        let extension_manager = &*self.extension_manager;
-        let burst_type = crate::extensions::BurstType::Server;
-        extension_manager.process_burst(server_name, &burst_type, &[message]).await?;
+        // TODO: Process server burst without extensions
+        // For now, just log the received server burst
+        tracing::debug!("Processed server burst from {}: {} (hop: {})", server_name, server_name_burst, hop_count);
         
         Ok(())
     }
@@ -1031,10 +914,9 @@ impl Server {
     async fn handle_channel_burst_received(&self, server_name: &str, message: Message) -> Result<()> {
         tracing::debug!("Received channel burst from server {}: {:?}", server_name, message.params);
         
-        // Process through extension system
-        let extension_manager = &*self.extension_manager;
-        let burst_type = crate::extensions::BurstType::Channel;
-        extension_manager.process_burst(server_name, &burst_type, &[message]).await?;
+        // TODO: Process channel burst without extensions
+        // For now, just log the received channel burst
+        tracing::debug!("Processed channel burst from {}: {:?}", server_name, message.params);
         
         Ok(())
     }
@@ -3282,10 +3164,6 @@ impl Server {
         &self.config
     }
     
-    /// Get the extension manager
-    pub fn extension_manager(&self) -> &Arc<ExtensionManager> {
-        &self.extension_manager
-    }
     
     /// Register IRCv3 extensions
     /// Note: This method should be implemented in the modules crate
@@ -3326,12 +3204,9 @@ impl Server {
     pub async fn handle_channel_burst(&self, source_server: &str, messages: &[Message]) -> Result<()> {
         tracing::info!("Processing channel burst from server: {} ({} messages)", source_server, messages.len());
         
-        // Use the extension manager to process the burst
-        let burst_type = BurstType::Channel;
-        if let Err(e) = self.extension_manager.process_burst(source_server, &burst_type, messages).await {
-            tracing::error!("Failed to process channel burst from {}: {}", source_server, e);
-            return Err(e);
-        }
+        // TODO: Process channel burst without extensions
+        // For now, just log the received channel burst
+        tracing::info!("Processed {} channel burst messages from server: {}", messages.len(), source_server);
         
         tracing::info!("Successfully processed channel burst from server: {}", source_server);
         Ok(())
@@ -3342,9 +3217,9 @@ impl Server {
     pub async fn prepare_channel_burst(&self, target_server: &str) -> Result<Vec<Message>> {
         tracing::info!("Preparing channel burst for server: {}", target_server);
         
-        // Use the extension manager to prepare the burst
-        let burst_type = BurstType::Channel;
-        let messages = self.extension_manager.prepare_burst(target_server, &burst_type).await?;
+        // TODO: Prepare channel burst without extensions
+        // For now, return empty messages
+        let messages = Vec::new();
         
         tracing::info!("Prepared {} channel burst messages for server: {}", messages.len(), target_server);
         Ok(messages)

@@ -1,6 +1,6 @@
 //! Connection throttling module for rate limiting client connections
 
-use rustircd_core::{Module, module::{ModuleResult, ModuleStatsResponse}, Client, Message, User, Error, Result, Server};
+use rustircd_core::{Module, module::{ModuleResult, ModuleStatsResponse, ModuleContext}, Client, Message, User, Error, Result, Server};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -232,20 +232,20 @@ impl Module for ThrottlingModule {
         Ok(())
     }
     
-    async fn handle_message(&mut self, _client: &Client, _message: &Message) -> Result<ModuleResult> {
+    async fn handle_message(&mut self, _client: &Client, _message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
         // Throttling module doesn't handle specific messages
         Ok(ModuleResult::NotHandled)
     }
     
-    async fn handle_server_message(&mut self, _server: &str, _message: &Message) -> Result<ModuleResult> {
+    async fn handle_server_message(&mut self, _server: &str, _message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
         Ok(ModuleResult::NotHandled)
     }
     
-    async fn handle_user_registration(&mut self, _user: &User) -> Result<()> {
+    async fn handle_user_registration(&mut self, _user: &User, _context: &ModuleContext) -> Result<()> {
         Ok(())
     }
     
-    async fn handle_user_disconnection(&mut self, _user: &User) -> Result<()> {
+    async fn handle_user_disconnection(&mut self, _user: &User, _context: &ModuleContext) -> Result<()> {
         Ok(())
     }
     

@@ -12,7 +12,7 @@ pub mod core_integration;
 pub mod extended_join;
 pub mod multi_prefix;
 
-use rustircd_core::{Module, module::ModuleResult, Client, Message, User, Result, Error};
+use rustircd_core::{Module, module::ModuleResult, Client, Message, User, Result, module::ModuleContext};
 use async_trait::async_trait;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -188,7 +188,7 @@ impl Module for Ircv3Module {
         Ok(())
     }
     
-    async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ModuleResult> {
+    async fn handle_message(&mut self, client: &Client, message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
         match &message.command {
             rustircd_core::MessageType::Cap => {
                 self.capability_negotiation.handle_cap(client, message).await?;
@@ -207,16 +207,16 @@ impl Module for Ircv3Module {
         }
     }
     
-    async fn handle_server_message(&mut self, _server: &str, _message: &Message) -> Result<ModuleResult> {
+    async fn handle_server_message(&mut self, _server: &str, _message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
         Ok(ModuleResult::NotHandled)
     }
     
-    async fn handle_user_registration(&mut self, user: &User) -> Result<()> {
+    async fn handle_user_registration(&mut self, user: &User, _context: &ModuleContext) -> Result<()> {
         self.account_tracking.handle_user_registration(user).await?;
         Ok(())
     }
     
-    async fn handle_user_disconnection(&mut self, user: &User) -> Result<()> {
+    async fn handle_user_disconnection(&mut self, user: &User, _context: &ModuleContext) -> Result<()> {
         self.account_tracking.handle_user_disconnection(user).await?;
         self.away_notification.handle_user_disconnection(user).await?;
         Ok(())

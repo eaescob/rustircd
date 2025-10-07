@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use rustircd_core::{Client, Message, Result, Server, User};
-use rustircd_core::module::{Module, ModuleResult, ModuleStatsResponse};
+use rustircd_core::module::{Module, ModuleResult, ModuleStatsResponse, ModuleContext};
 use super::{MessagingManager, MessagingModule};
 
 /// Wrapper module that integrates messaging modules with the core module system
@@ -66,7 +66,7 @@ impl Module for MessagingWrapper {
         Ok(())
     }
     
-    async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ModuleResult> {
+    async fn handle_message(&mut self, client: &Client, message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
         // Get all connected clients for messaging modules that need to broadcast
         // Note: In a real implementation, this would need to be passed from the server
         let all_clients = vec![client]; // Simplified for now
@@ -85,17 +85,17 @@ impl Module for MessagingWrapper {
         }
     }
     
-    async fn handle_server_message(&mut self, _server: &str, _message: &Message) -> Result<ModuleResult> {
+    async fn handle_server_message(&mut self, _server: &str, _message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
         // Messaging modules typically don't handle server messages
         Ok(ModuleResult::NotHandled)
     }
     
-    async fn handle_user_registration(&mut self, _user: &User) -> Result<()> {
+    async fn handle_user_registration(&mut self, _user: &User, _context: &ModuleContext) -> Result<()> {
         // No special handling needed for user registration
         Ok(())
     }
     
-    async fn handle_user_disconnection(&mut self, _user: &User) -> Result<()> {
+    async fn handle_user_disconnection(&mut self, _user: &User, _context: &ModuleContext) -> Result<()> {
         // No special handling needed for user disconnection
         Ok(())
     }

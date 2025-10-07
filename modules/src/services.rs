@@ -5,7 +5,7 @@
 
 use rustircd_core::{
     async_trait, Client, Error, Message, MessageType, Module, ModuleManager,
-    ModuleNumericManager, module::{ModuleResult, ModuleStatsResponse},
+    ModuleNumericManager, module::{ModuleResult, ModuleStatsResponse, ModuleContext},
     NumericReply, Result, User
 };
 use tracing::{debug, info, warn};
@@ -489,7 +489,7 @@ impl Module for ServicesModule {
         Ok(())
     }
 
-    async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ModuleResult> {
+    async fn handle_message(&mut self, client: &Client, message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
         let user = match &client.user {
             Some(u) => u,
             None => return Ok(ModuleResult::NotHandled),
@@ -512,15 +512,15 @@ impl Module for ServicesModule {
         }
     }
 
-    async fn handle_server_message(&mut self, _server: &str, _message: &Message) -> Result<ModuleResult> {
+    async fn handle_server_message(&mut self, _server: &str, _message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
         Ok(ModuleResult::NotHandled)
     }
 
-    async fn handle_user_registration(&mut self, _user: &User) -> Result<()> {
+    async fn handle_user_registration(&mut self, _user: &User, _context: &ModuleContext) -> Result<()> {
         Ok(())
     }
 
-    async fn handle_user_disconnection(&mut self, _user: &User) -> Result<()> {
+    async fn handle_user_disconnection(&mut self, _user: &User, _context: &ModuleContext) -> Result<()> {
         Ok(())
     }
 

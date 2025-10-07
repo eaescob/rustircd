@@ -3,7 +3,7 @@
 //! Demonstrates the enhanced help system with dynamic module discovery.
 
 use rustircd_core::{Client, User, ModuleManager};
-use rustircd_modules::{HelpModule, MonitorModule, KnockModule, BanManagementModule, HelpProvider};
+use rustircd_modules::{HelpModule, MonitorModule, KnockModule, GlineModule, KlineModule, DlineModule, XlineModule, HelpProvider};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,13 +17,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let help_module = HelpModule::new();
     let monitor_module = MonitorModule::new();
     let knock_module = KnockModule::new();
-    let ban_module = BanManagementModule::new();
+    let gline_module = GlineModule::new();
+    let kline_module = KlineModule::new();
+    let dline_module = DlineModule::new();
+    let xline_module = XlineModule::new();
     
     // Register modules
     module_manager.register_module("help", Box::new(help_module)).await?;
     module_manager.register_module("monitor", Box::new(monitor_module)).await?;
     module_manager.register_module("knock", Box::new(knock_module)).await?;
-    module_manager.register_module("ban_management", Box::new(ban_module)).await?;
+    module_manager.register_module("gline", Box::new(gline_module)).await?;
+    module_manager.register_module("kline", Box::new(kline_module)).await?;
+    module_manager.register_module("dline", Box::new(dline_module)).await?;
+    module_manager.register_module("xline", Box::new(xline_module)).await?;
     
     // Initialize all modules
     module_manager.initialize_all().await?;

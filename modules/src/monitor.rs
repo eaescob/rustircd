@@ -8,7 +8,7 @@ use rustircd_core::{
     NumericReply, Result, User, ModuleNumericManager, ModuleNumericClient,
     define_module_numerics,
 };
-use rustircd_core::module::ModuleResult;
+use rustircd_core::module::{ModuleResult, ModuleContext};
 use tracing::{debug, info};
 use std::collections::{HashMap, HashSet};
 use tokio::sync::RwLock;
@@ -327,7 +327,7 @@ impl Module for MonitorModule {
         "1.0.0"
     }
     
-    async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ModuleResult> {
+    async fn handle_message(&mut self, client: &Client, message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
         match message.command {
             MessageType::Custom(ref cmd) if cmd == "MONITOR" => {
                 self.handle_monitor(client, &message.params).await?;
@@ -349,15 +349,15 @@ impl Module for MonitorModule {
         Ok(())
     }
     
-    async fn handle_server_message(&mut self, _server: &str, _message: &Message) -> Result<ModuleResult> {
+    async fn handle_server_message(&mut self, _server: &str, _message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
         Ok(ModuleResult::NotHandled)
     }
     
-    async fn handle_user_registration(&mut self, _user: &User) -> Result<()> {
+    async fn handle_user_registration(&mut self, _user: &User, _context: &ModuleContext) -> Result<()> {
         Ok(())
     }
     
-    async fn handle_user_disconnection(&mut self, _user: &User) -> Result<()> {
+    async fn handle_user_disconnection(&mut self, _user: &User, _context: &ModuleContext) -> Result<()> {
         Ok(())
     }
     

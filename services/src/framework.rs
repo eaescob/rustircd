@@ -39,7 +39,7 @@ impl ServiceContext {
     
     /// Remove a user from the database
     pub async fn remove_user(&self, user_id: uuid::Uuid) -> Result<()> {
-        self.database.remove_user(user_id)
+        self.database.remove_user(user_id).map(|_| ())
     }
     
     /// Add a channel to the database
@@ -47,9 +47,9 @@ impl ServiceContext {
         self.database.add_channel(channel)
     }
     
-    /// Get a channel by name
-    pub async fn get_channel(&self, name: &str) -> Option<rustircd_core::ChannelInfo> {
-        self.database.get_channel(name)
+    /// Get channel users
+    pub async fn get_channel_users(&self, name: &str) -> Vec<String> {
+        self.database.get_channel_users(name)
     }
     
     /// Add a user to a channel

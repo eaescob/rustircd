@@ -1,6 +1,6 @@
 //! Optional IRC commands module
 
-use rustircd_core::{Module, module::{ModuleResult, ModuleStatsResponse}, Client, Message, User, Error, Result, Server};
+use rustircd_core::{Module, module::{ModuleResult, ModuleStatsResponse, ModuleContext}, Client, Message, User, Error, Result, Server};
 use async_trait::async_trait;
 
 /// Optional IRC commands module
@@ -48,7 +48,7 @@ impl Module for OptionalModule {
         Ok(())
     }
     
-    async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ModuleResult> {
+    async fn handle_message(&mut self, client: &Client, message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
         match &message.command {
             rustircd_core::MessageType::Custom(cmd) => {
                 match cmd.as_str() {
@@ -91,15 +91,15 @@ impl Module for OptionalModule {
         }
     }
     
-    async fn handle_server_message(&mut self, _server: &str, _message: &Message) -> Result<ModuleResult> {
+    async fn handle_server_message(&mut self, _server: &str, _message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
         Ok(ModuleResult::NotHandled)
     }
     
-    async fn handle_user_registration(&mut self, _user: &User) -> Result<()> {
+    async fn handle_user_registration(&mut self, _user: &User, _context: &ModuleContext) -> Result<()> {
         Ok(())
     }
     
-    async fn handle_user_disconnection(&mut self, _user: &User) -> Result<()> {
+    async fn handle_user_disconnection(&mut self, _user: &User, _context: &ModuleContext) -> Result<()> {
         Ok(())
     }
     

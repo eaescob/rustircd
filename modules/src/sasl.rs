@@ -3,7 +3,7 @@
 //! This module provides SASL authentication support as per IRCv3 specification.
 //! It supports various SASL mechanisms including PLAIN, EXTERNAL, and SCRAM-SHA-256.
 
-use rustircd_core::{User, Message, Client, Result, Error, NumericReply, Config, MessageType};
+use rustircd_core::{User, Message, Client, Result, Error, NumericReply, Config, MessageType, ModuleNumericManager, module::{ModuleContext, ModuleResult, ModuleStatsResponse}};
 use std::collections::HashMap;
 use uuid::Uuid;
 use async_trait::async_trait;
@@ -473,6 +473,85 @@ impl SaslModule {
 impl Default for SaslModule {
     fn default() -> Self {
         Self::new(SaslConfig::default())
+    }
+}
+
+#[async_trait]
+impl rustircd_core::Module for SaslModule {
+    fn name(&self) -> &str {
+        "sasl"
+    }
+    
+    fn version(&self) -> &str {
+        "1.0.0"
+    }
+    
+    fn description(&self) -> &str {
+        "Provides SASL authentication functionality for IRC clients"
+    }
+    
+    async fn init(&mut self) -> Result<()> {
+        tracing::info!("{} module initialized", self.name());
+        Ok(())
+    }
+    
+    async fn cleanup(&mut self) -> Result<()> {
+        tracing::info!("{} module cleaned up", self.name());
+        Ok(())
+    }
+    
+    async fn handle_message(&mut self, client: &rustircd_core::Client, message: &rustircd_core::Message, _context: &ModuleContext) -> Result<ModuleResult> {
+        match message.command {
+            rustircd_core::MessageType::Custom(ref cmd) if cmd == "AUTHENTICATE" => {
+                self.handle_authenticate(client, message).await?;
+                Ok(ModuleResult::Handled)
+            }
+            _ => Ok(ModuleResult::NotHandled),
+        }
+    }
+    
+    async fn handle_server_message(&mut self, _server: &str, _message: &rustircd_core::Message, _context: &ModuleContext) -> Result<ModuleResult> {
+        Ok(ModuleResult::NotHandled)
+    }
+    
+    async fn handle_user_registration(&mut self, _user: &rustircd_core::User, _context: &ModuleContext) -> Result<()> {
+        Ok(())
+    }
+    
+    async fn handle_user_disconnection(&mut self, _user: &rustircd_core::User, _context: &ModuleContext) -> Result<()> {
+        Ok(())
+    }
+    
+    fn get_capabilities(&self) -> Vec<String> {
+        vec!["message_handler".to_string()]
+    }
+    
+    fn supports_capability(&self, capability: &str) -> bool {
+        capability == "message_handler"
+    }
+    
+    fn get_numeric_replies(&self) -> Vec<u16> {
+        vec![]
+    }
+    
+    fn handles_numeric_reply(&self, _numeric: u16) -> bool {
+        false
+    }
+    
+    async fn handle_numeric_reply(&mut self, _numeric: u16, _params: Vec<String>) -> Result<()> {
+        Ok(())
+    }
+    
+    async fn handle_stats_query(&mut self, _query: &str, _client_id: Uuid, _server: Option<&rustircd_core::Server>) -> Result<Vec<ModuleStatsResponse>> {
+        Ok(vec![])
+    }
+    
+    fn get_stats_queries(&self) -> Vec<String> {
+        vec![]
+    }
+    
+    fn register_numerics(&self, _manager: &mut ModuleNumericManager) -> Result<()> {
+        Ok(())
     }
 }
 

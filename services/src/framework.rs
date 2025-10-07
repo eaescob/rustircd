@@ -1,8 +1,93 @@
 //! Services framework for IRC daemon
 
-use rustircd_core::{Client, Message, User, Result};
+use rustircd_core::{Client, Message, User, Result, Database, ServerConnectionManager};
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::Arc;
+
+/// Service context providing access to core functionality
+pub struct ServiceContext {
+    /// Database access
+    pub database: Arc<Database>,
+    /// Server connection manager for broadcasting
+    pub server_connections: Arc<ServerConnectionManager>,
+}
+
+impl ServiceContext {
+    /// Create a new service context
+    pub fn new(database: Arc<Database>, server_connections: Arc<ServerConnectionManager>) -> Self {
+        Self {
+            database,
+            server_connections,
+        }
+    }
+    
+    /// Add a user to the database
+    pub async fn add_user(&self, user: User) -> Result<()> {
+        self.database.add_user(user)
+    }
+    
+    /// Get a user by nickname
+    pub async fn get_user_by_nick(&self, nick: &str) -> Option<User> {
+        self.database.get_user_by_nick(nick)
+    }
+    
+    /// Update a user in the database
+    pub async fn update_user(&self, user: User) -> Result<()> {
+        self.database.add_user(user)
+    }
+    
+    /// Remove a user from the database
+    pub async fn remove_user(&self, user_id: uuid::Uuid) -> Result<()> {
+        self.database.remove_user(user_id)
+    }
+    
+    /// Add a channel to the database
+    pub async fn add_channel(&self, channel: rustircd_core::ChannelInfo) -> Result<()> {
+        self.database.add_channel(channel)
+    }
+    
+    /// Get a channel by name
+    pub async fn get_channel(&self, name: &str) -> Option<rustircd_core::ChannelInfo> {
+        self.database.get_channel(name)
+    }
+    
+    /// Add a user to a channel
+    pub async fn add_user_to_channel(&self, nick: &str, channel: &str) -> Result<()> {
+        self.database.add_user_to_channel(nick, channel)
+    }
+    
+    /// Remove a user from a channel
+    pub async fn remove_user_from_channel(&self, nick: &str, channel: &str) -> Result<()> {
+        self.database.remove_user_from_channel(nick, channel)
+    }
+    
+    /// Broadcast a message to all servers
+    pub async fn broadcast_to_servers(&self, message: Message) -> Result<()> {
+        self.server_connections.broadcast_to_servers(message).await
+    }
+    
+    /// Send a message to a specific server
+    pub async fn send_to_server(&self, server_name: &str, message: Message) -> Result<()> {
+        self.server_connections.send_to_server(server_name, message).await
+    }
+    
+    /// Send a message to a local user
+    pub async fn send_to_user(&self, nick: &str, message: Message) -> Result<()> {
+        // This would need to be implemented in the core to find the user's client
+        // For now, we'll just log it
+        tracing::debug!("Would send message to user {}: {:?}", nick, message);
+        Ok(())
+    }
+    
+    /// Send a message to a channel
+    pub async fn send_to_channel(&self, channel: &str, message: Message) -> Result<()> {
+        // This would need to be implemented in the core to find channel members
+        // For now, we'll just log it
+        tracing::debug!("Would send message to channel {}: {:?}", channel, message);
+        Ok(())
+    }
+}
 
 /// Service trait that all services must implement
 #[async_trait]
@@ -23,16 +108,16 @@ pub trait Service: Send + Sync {
     async fn cleanup(&mut self) -> Result<()>;
     
     /// Handle a message from a client
-    async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ServiceResult>;
+    async fn handle_message(&mut self, client: &Client, message: &Message, context: &ServiceContext) -> Result<ServiceResult>;
     
     /// Handle a message from a server
-    async fn handle_server_message(&mut self, server: &str, message: &Message) -> Result<ServiceResult>;
+    async fn handle_server_message(&mut self, server: &str, message: &Message, context: &ServiceContext) -> Result<ServiceResult>;
     
     /// Handle user registration
-    async fn handle_user_registration(&mut self, user: &User) -> Result<()>;
+    async fn handle_user_registration(&mut self, user: &User, context: &ServiceContext) -> Result<()>;
     
     /// Handle user disconnection
-    async fn handle_user_disconnection(&mut self, user: &User) -> Result<()>;
+    async fn handle_user_disconnection(&mut self, user: &User, context: &ServiceContext) -> Result<()>;
     
     
     /// Get service capabilities
@@ -61,16 +146,18 @@ pub struct ServiceManager {
     message_handlers: Vec<String>,
     server_message_handlers: Vec<String>,
     user_handlers: Vec<String>,
+    context: ServiceContext,
 }
 
 impl ServiceManager {
     /// Create a new service manager
-    pub fn new() -> Self {
+    pub fn new(database: Arc<Database>, server_connections: Arc<ServerConnectionManager>) -> Self {
         Self {
             services: HashMap::new(),
             message_handlers: Vec::new(),
             server_message_handlers: Vec::new(),
             user_handlers: Vec::new(),
+            context: ServiceContext::new(database, server_connections),
         }
     }
     
@@ -128,7 +215,7 @@ impl ServiceManager {
     pub async fn handle_message(&mut self, client: &Client, message: &Message) -> Result<ServiceResult> {
         for service_name in &self.message_handlers {
             if let Some(service) = self.services.get_mut(service_name) {
-                match service.handle_message(client, message).await {
+                match service.handle_message(client, message, &self.context).await {
                     Ok(ServiceResult::HandledStop) => return Ok(ServiceResult::HandledStop),
                     Ok(ServiceResult::Rejected(reason)) => return Ok(ServiceResult::Rejected(reason)),
                     Ok(ServiceResult::Handled) => return Ok(ServiceResult::Handled),
@@ -148,7 +235,7 @@ impl ServiceManager {
     pub async fn handle_server_message(&mut self, server: &str, message: &Message) -> Result<ServiceResult> {
         for service_name in &self.server_message_handlers {
             if let Some(service) = self.services.get_mut(service_name) {
-                match service.handle_server_message(server, message).await {
+                match service.handle_server_message(server, message, &self.context).await {
                     Ok(ServiceResult::HandledStop) => return Ok(ServiceResult::HandledStop),
                     Ok(ServiceResult::Rejected(reason)) => return Ok(ServiceResult::Rejected(reason)),
                     Ok(ServiceResult::Handled) => return Ok(ServiceResult::Handled),
@@ -168,7 +255,7 @@ impl ServiceManager {
     pub async fn handle_user_registration(&mut self, user: &User) -> Result<()> {
         for service_name in &self.user_handlers {
             if let Some(service) = self.services.get_mut(service_name) {
-                if let Err(e) = service.handle_user_registration(user).await {
+                if let Err(e) = service.handle_user_registration(user, &self.context).await {
                     tracing::error!("Error in service {}: {}", service_name, e);
                 }
             }
@@ -180,7 +267,7 @@ impl ServiceManager {
     pub async fn handle_user_disconnection(&mut self, user: &User) -> Result<()> {
         for service_name in &self.user_handlers {
             if let Some(service) = self.services.get_mut(service_name) {
-                if let Err(e) = service.handle_user_disconnection(user).await {
+                if let Err(e) = service.handle_user_disconnection(user, &self.context).await {
                     tracing::error!("Error in service {}: {}", service_name, e);
                 }
             }
@@ -211,8 +298,4 @@ impl ServiceManager {
     }
 }
 
-impl Default for ServiceManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Note: Default implementation removed as ServiceManager now requires database and server_connections

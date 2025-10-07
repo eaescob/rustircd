@@ -18,9 +18,10 @@ A high-performance, modular IRC daemon implementation in Rust, featuring RFC 145
 
 ### Modular Architecture
 - **Core System**: Minimal core with essential IRC functionality
-- **Module System**: 11 production-ready modules with dynamic loading
+- **Module System**: 20+ production-ready modules with dynamic loading
 - **Services Framework**: Extensible framework for network services
 - **Extension System**: Clean hooks for IRCv3 capabilities and custom features
+- **Configurable Messaging**: Optional messaging modules with configuration-driven loading
 
 ### Security & Performance
 - **Connection Throttling**: IP-based rate limiting with multi-stage throttling
@@ -179,6 +180,23 @@ require_client_password = false
 enabled = false
 cert_file = "cert.pem"
 key_file = "key.pem"
+
+[modules.messaging]
+enabled = true
+
+[modules.messaging.wallops]
+enabled = true
+require_operator = true
+receiver_mode = "w"
+self_only_mode = true
+mode_requires_operator = false  # Users can set +w themselves
+
+[modules.messaging.globops]
+enabled = true
+require_operator = true
+receiver_mode = "g"
+self_only_mode = false  # Operators can set +g on others
+mode_requires_operator = true  # Only operators can set +g
 ```
 
 ### Custom Replies (`replies.toml`)
@@ -195,6 +213,110 @@ text = "{nick} :That nickname is already taken! Try {nick}_ or {nick}2"
 description = "ERR_NICKNAMEINUSE - Helpful nickname suggestion"
 ```
 
+### Messaging Modules Configuration
+
+RustIRCD includes a configurable messaging system with WALLOPS and GLOBOPS support:
+
+#### Configuration Options
+
+| Setting | Description | Values |
+|---------|-------------|---------|
+| `enabled` | Enable/disable messaging system | `true`, `false` |
+| `wallops.enabled` | Enable WALLOPS command | `true`, `false` |
+| `globops.enabled` | Enable GLOBOPS command | `true`, `false` |
+| `receiver_mode` | Mode character for receiving messages | `"w"`, `"g"`, `"x"`, etc. |
+| `require_operator` | Require operator privileges to send | `true`, `false` |
+| `self_only_mode` | Users can only set mode on themselves | `true`, `false` |
+| `mode_requires_operator` | Require operator to set the mode | `true`, `false` |
+
+#### Configuration Examples
+
+**Default Configuration (Both Enabled)**
+```toml
+[modules.messaging]
+enabled = true
+
+[modules.messaging.wallops]
+enabled = true
+require_operator = true
+receiver_mode = "w"
+self_only_mode = true
+mode_requires_operator = false  # Users can set +w themselves
+
+[modules.messaging.globops]
+enabled = true
+require_operator = true
+receiver_mode = "g"
+self_only_mode = false  # Operators can set +g on others
+mode_requires_operator = true  # Only operators can set +g
+```
+
+**WALLOPS Only**
+```toml
+[modules.messaging]
+enabled = true
+
+[modules.messaging.wallops]
+enabled = true
+
+[modules.messaging.globops]
+enabled = false
+```
+
+**Disabled Messaging**
+```toml
+[modules.messaging]
+enabled = false
+```
+
+**Custom Mode Characters**
+```toml
+[modules.messaging.wallops]
+enabled = true
+receiver_mode = "x"  # Custom mode character
+
+[modules.messaging.globops]
+enabled = true
+receiver_mode = "y"  # Custom mode character
+```
+
+#### Usage Examples
+
+**WALLOPS (Operator Messaging)**
+```bash
+# Operators can send wallops messages
+/WALLOPS Server maintenance scheduled for tonight at 2 AM
+
+# Users can set +w mode to receive wallops
+/MODE YourNick +w
+
+# Users without +w mode won't receive wallops
+/MODE YourNick -w
+```
+
+**GLOBOPS (Global Operator Notices)**
+```bash
+# Operators can send globops messages
+/GLOBOPS Network-wide announcement: New features available
+
+# Only operators can set +g mode (for themselves or others)
+/MODE OperatorNick +g
+
+# Operators can set +g on other users
+/MODE SomeUser +g
+
+# Regular users cannot set +g mode
+/MODE RegularUser +g
+# ERR_USERS_DONT_MATCH: Can't change mode for other users
+```
+
+#### Mode Behavior
+
+| Mode | Who Can Send | Who Can Set | Who Can Receive |
+|------|--------------|-------------|-----------------|
+| `+w` (WALLOPS) | Operators only | Users on themselves | Users with `+w` mode |
+| `+g` (GLOBOPS) | Operators only | Operators only | Users with `+g` mode |
+
 ### Available Placeholders
 - **Server**: `{server_name}`, `{server_version}`, `{server_description}`
 - **User**: `{nick}`, `{user}`, `{host}`, `{realname}`, `{target}`
@@ -203,7 +325,7 @@ description = "ERR_NICKNAMEINUSE - Helpful nickname suggestion"
 
 ## 🔌 Modules
 
-RustIRCD includes 11 production-ready modules:
+RustIRCD includes 20+ production-ready modules:
 
 ### Core Modules
 
@@ -220,8 +342,15 @@ RustIRCD includes 11 production-ready modules:
 - **Multi-Prefix**: NAMES command shows multiple prefixes for users with multiple channel modes
 
 #### Optional Commands Module
-- **Commands**: AWAY, REHASH, SUMMON, ISON, OPERWALL, WALLOPS, USERHOST, USERS
+- **Commands**: AWAY, REHASH, SUMMON, ISON, USERHOST, USERS
 - **Features**: Additional IRC commands not in core
+
+#### Messaging Modules
+- **WALLOPS Module**: Operator messaging with +w mode support
+- **GLOBOPS Module**: Global operator notices with +g mode support
+- **Configuration**: Fully configurable via TOML (enabled/disabled, mode characters, permissions)
+- **Mode System**: Dynamic user mode registration with custom validation rules
+- **Permissions**: WALLOPS (users can set +w), GLOBOPS (only operators can set +g)
 
 ### Security Modules
 

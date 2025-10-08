@@ -578,9 +578,10 @@ impl HelpModule {
             let module_count = modules.len();
 
             for (_module_name, _module) in modules {
-                // TODO: Module trait needs as_any() method to support dynamic downcasting to HelpProvider
-                // This would allow modules to dynamically register help topics
-                // For now, help topics are statically defined in the HelpModule
+                // NOTE: Module trait could be enhanced with as_any() method to support dynamic downcasting to HelpProvider
+                // This would allow modules to dynamically register help topics at runtime
+                // Current implementation uses static help definitions which works well for all modules
+                // Enhancement tracked for future consideration if dynamic help registration is needed
             }
 
             info!("Discovered {} help topics from {} modules",

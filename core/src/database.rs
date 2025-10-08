@@ -195,6 +195,14 @@ impl Database {
             .map(|entry| entry.value().clone())
             .collect()
     }
+    
+    /// Get all users from a specific server
+    pub fn get_users_by_server(&self, server_name: &str) -> Vec<User> {
+        self.users.iter()
+            .filter(|entry| entry.value().server == server_name)
+            .map(|entry| entry.value().clone())
+            .collect()
+    }
 
     // Server management
 

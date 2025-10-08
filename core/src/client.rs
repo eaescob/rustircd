@@ -61,6 +61,8 @@ pub struct Client {
     pub recvq: RecvQueue,
     /// Connection timing information
     pub timing: ConnectionTiming,
+    /// Server password (for server connections only)
+    pub server_password: Option<String>,
 }
 
 impl Client {
@@ -125,6 +127,7 @@ impl Client {
             sendq: SendQueue::new(max_sendq),
             recvq: RecvQueue::new(max_recvq),
             timing: ConnectionTiming::new(ping_frequency, connection_timeout),
+            server_password: None,
         }
     }
     

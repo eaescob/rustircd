@@ -365,6 +365,24 @@ impl ServerConnectionManager {
         }
         Ok(())
     }
+    
+    /// Send message to all servers except the specified one
+    pub async fn broadcast_message(&self, message: &Message, except_server: Option<&str>) -> Result<()> {
+        let connections = self.connections.read().await;
+        for connection in connections.values() {
+            // Skip the excluded server if specified
+            if let Some(excluded) = except_server {
+                if connection.info.name == excluded {
+                    continue;
+                }
+            }
+            
+            if let Err(e) = connection.send(message.clone()) {
+                tracing::warn!("Failed to send message to server {}: {}", connection.info.name, e);
+            }
+        }
+        Ok(())
+    }
 
     /// Send message to specific server
     pub async fn send_to_server(&self, server_name: &str, message: Message) -> Result<()> {

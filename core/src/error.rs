@@ -32,6 +32,9 @@ pub enum Error {
     #[error("Server error: {0}")]
     Server(String),
     
+    #[error("Service error: {0}")]
+    Service(String),
+    
     #[error("Network error: {0}")]
     Network(String),
     

@@ -305,14 +305,16 @@ pub enum NetworkMessage {
 pub struct NetworkMessageHandler {
     database: Arc<Database>,
     query_manager: Arc<NetworkQueryManager>,
+    server_name: String,
 }
 
 impl NetworkMessageHandler {
     /// Create a new network message handler
-    pub fn new(database: Arc<Database>, query_manager: Arc<NetworkQueryManager>) -> Self {
+    pub fn new(database: Arc<Database>, query_manager: Arc<NetworkQueryManager>, server_name: String) -> Self {
         Self {
             database,
             query_manager,
+            server_name,
         }
     }
 
@@ -413,7 +415,7 @@ impl NetworkMessageHandler {
                 let users = self.database.search_users(&pattern);
                 let response = NetworkResponse::WhoResponse {
                     request_id,
-                    server: "localhost".to_string(), // TODO: Get actual server name
+                    server: self.server_name.clone(),
                     users,
                 };
                 // Send response back to requesting server
@@ -423,7 +425,7 @@ impl NetworkMessageHandler {
                 let user = self.database.get_user_by_nick(&nickname);
                 let response = NetworkResponse::WhoisResponse {
                     request_id,
-                    server: "localhost".to_string(), // TODO: Get actual server name
+                    server: self.server_name.clone(),
                     user,
                 };
                 self.send_network_response(response, from_server).await?;
@@ -432,7 +434,7 @@ impl NetworkMessageHandler {
                 let users = self.database.get_user_history(&nickname).await;
                 let response = NetworkResponse::WhowasResponse {
                     request_id,
-                    server: "localhost".to_string(), // TODO: Get actual server name
+                    server: self.server_name.clone(),
                     users: users.into_iter().map(|entry| entry.user).collect(),
                 };
                 self.send_network_response(response, from_server).await?;
@@ -441,7 +443,7 @@ impl NetworkMessageHandler {
                 let count = self.database.user_count() as u32;
                 let response = NetworkResponse::UserCountResponse {
                     request_id,
-                    server: "localhost".to_string(), // TODO: Get actual server name
+                    server: self.server_name.clone(),
                     count,
                 };
                 self.send_network_response(response, from_server).await?;
@@ -450,7 +452,7 @@ impl NetworkMessageHandler {
                 let servers = self.database.get_all_servers();
                 let response = NetworkResponse::ServerListResponse {
                     request_id,
-                    server: "localhost".to_string(), // TODO: Get actual server name
+                    server: self.server_name.clone(),
                     servers,
                 };
                 self.send_network_response(response, from_server).await?;

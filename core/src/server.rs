@@ -92,6 +92,11 @@ impl Server {
 
     /// Create a new server instance
     pub async fn new(config: Config) -> Self {
+        Self::new_with_config_path(config, "config.toml".to_string()).await
+    }
+    
+    /// Create a new server instance with a specific config path
+    pub async fn new_with_config_path(config: Config, config_path: String) -> Self {
         let (connection_handler, _) = ConnectionHandler::new();
         
         // Initialize database
@@ -113,6 +118,7 @@ impl Server {
         let network_message_handler = Arc::new(NetworkMessageHandler::new(
             database.clone(),
             network_query_manager.clone(),
+            config.server.name.clone(),
         ));
 
         
@@ -150,7 +156,7 @@ impl Server {
         let rehash_service = Arc::new(RehashService::new(
             config_arc.clone(),
             motd_manager.clone(),
-            "config.toml".to_string(), // TODO: Add config_file_path field to Config struct
+            config_path,
         ));
         
         Self {
@@ -298,6 +304,56 @@ impl Server {
         // Start message processing loop
         self.start_message_processor().await?;
         
+        // Start connection timeout checker
+        self.start_timeout_checker().await?;
+        
+        Ok(())
+    }
+    
+    /// Start connection timeout checker
+    async fn start_timeout_checker(&self) -> Result<()> {
+        let connection_handler = self.connection_handler.clone();
+        
+        tokio::spawn(async move {
+            loop {
+                // Check every 30 seconds
+                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                
+                let mut handler = connection_handler.write().await;
+                let mut timed_out_clients = Vec::new();
+                
+                // Find timed out clients
+                for (client_id, client) in handler.iter_clients() {
+                    if client.timing.is_timed_out() {
+                        timed_out_clients.push(*client_id);
+                        tracing::info!("Client {} timed out (no PONG received)", client_id);
+                    } else if client.timing.should_send_ping() {
+                        // Send PING if it's time
+                        let ping_msg = Message::new(
+                            MessageType::Ping,
+                            vec![chrono::Utc::now().timestamp().to_string()],
+                        );
+                        if let Err(e) = client.send(ping_msg) {
+                            tracing::warn!("Failed to send PING to client {}: {}", client_id, e);
+                        } else {
+                            tracing::debug!("Sent PING to client {}", client_id);
+                        }
+                    }
+                }
+                
+                // Disconnect timed out clients
+                for client_id in timed_out_clients {
+                    if let Some(client) = handler.remove_client(&client_id) {
+                        tracing::info!("Disconnecting timed out client: {}", client_id);
+                        let _ = client.send(Message::new(
+                            MessageType::Custom("ERROR".to_string()),
+                            vec!["Connection timeout".to_string()],
+                        ));
+                    }
+                }
+            }
+        });
+        
         Ok(())
     }
     
@@ -369,20 +425,12 @@ impl Server {
     }
     
     /// Start message processing loop
+    /// Note: Message processing is currently handled directly in handle_client_message
+    /// and through the module system. This method is kept for potential future use
+    /// if we want to implement a dedicated message queue/processing thread.
     async fn start_message_processor(&self) -> Result<()> {
-        let _connection_handler = self.connection_handler.clone();
-        let _module_manager = self.module_manager.clone();
-        let _users = self.users.clone();
-        let _nick_to_id = self.nick_to_id.clone();
-        // Channels are now managed by modules, not core
-        // let channels = self.channels.clone();
-        
-        tokio::spawn(async move {
-            // TODO: Implement message processing loop
-            // This would receive messages from the connection handler
-            // and process them through the module system
-        });
-        
+        // Message processing is currently handled synchronously in handle_client_message
+        // No async processing loop needed at this time
         Ok(())
     }
     
@@ -514,6 +562,95 @@ impl Server {
         Ok(())
     }
     
+    /// Handle initial server registration from a new connection (before server is fully connected)
+    async fn handle_initial_server_registration(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        if message.params.len() < 3 {
+            return Err(Error::MessageParse("SERVER command requires at least 3 parameters".to_string()));
+        }
+        
+        let server_name = &message.params[0];
+        let hop_count: u8 = message.params[1].parse()
+            .map_err(|_| Error::MessageParse("Invalid hop count in SERVER command".to_string()))?;
+        let server_description = &message.params[2];
+        
+        tracing::info!("Server {} attempting to register (hopcount: {})", server_name, hop_count);
+        
+        // Validate server password
+        let connection_handler = self.connection_handler.read().await;
+        let client = connection_handler.get_client(&client_id)
+            .ok_or_else(|| Error::Server("Client not found".to_string()))?;
+        
+        let provided_password = client.server_password.clone()
+            .ok_or_else(|| Error::Server("No password provided (PASS command required before SERVER)".to_string()))?;
+        
+        // Check if this server is in our configuration
+        let server_link = self.server_connections.get_server_link(server_name)
+            .ok_or_else(|| Error::Server(format!("Server {} is not authorized (not in configuration)", server_name)))?;
+        
+        // Validate password
+        if server_link.password != provided_password {
+            tracing::warn!("Password mismatch for server {}", server_name);
+            return Err(Error::Server(format!("Password mismatch for server {}", server_name)));
+        }
+        
+        tracing::info!("Server {} password validated successfully", server_name);
+        
+        // Create server connection
+        let remote_addr = client.remote_addr.clone();
+        let local_addr = client.local_addr.clone();
+        
+        drop(connection_handler); // Release the read lock
+        
+        // Create a new server connection object
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let server_connection = crate::server_connection::ServerConnection::new(
+            client_id,
+            remote_addr.parse().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap()),
+            local_addr.parse().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap()),
+            tx,
+            false, // incoming connection
+        );
+        
+        // Add server info
+        let mut server_connection = server_connection;
+        server_connection.info.name = server_name.clone();
+        server_connection.info.description = server_description.clone();
+        server_connection.info.hop_count = hop_count;
+        server_connection.state = crate::server_connection::ServerConnectionState::Registered;
+        
+        // Check if it's a super server
+        let is_super_server = self.server_connections.is_super_server(server_name);
+        server_connection.info.is_super_server = is_super_server;
+        
+        // Add to super servers map if applicable
+        if is_super_server {
+            let mut super_servers = self.super_servers.write().await;
+            super_servers.insert(server_name.clone(), true);
+        }
+        
+        // Add server connection to manager
+        self.server_connections.add_connection(server_connection.clone()).await?;
+        
+        // Add server to database
+        let server_info = crate::database::ServerInfo {
+            name: server_name.clone(),
+            description: server_description.clone(),
+            version: String::new(),
+            hopcount: hop_count as u32,
+            connected_at: chrono::Utc::now(),
+            is_super_server,
+            user_count: 0,
+        };
+        self.database.add_server(server_info)?;
+        
+        // Send server burst to the new server
+        self.send_server_burst(server_name).await?;
+        
+        tracing::info!("Server {} fully registered and burst sent", server_name);
+        
+        Ok(())
+    }
+    
     /// Handle server registration
     async fn handle_server_registration(&self, server_name: &str, message: Message, is_super_server: bool) -> Result<()> {
         tracing::info!("Server {} registered (super: {})", server_name, is_super_server);
@@ -540,20 +677,87 @@ impl Server {
     }
     
     /// Handle server quit
-    async fn handle_server_quit(&self, server_name: &str, _message: Message) -> Result<()> {
-        tracing::info!("Server {} quit", server_name);
+    async fn handle_server_quit(&self, server_name: &str, message: Message) -> Result<()> {
+        let quit_reason = message.params.first()
+            .map(|s| s.as_str())
+            .unwrap_or("Server quit");
         
-        // Implement server quit logic
-        // TODO: Integrate with full server management system
+        tracing::info!("Server {} quit: {}", server_name, quit_reason);
         
-        // In production, this would:
-        // 1. Remove server from server connections
-        // 2. Mark all users from this server as offline
-        // 3. Remove server from routing table
-        // 4. Notify other servers of the quit
-        // 5. Clean up server-specific resources
+        // 1. Get all users from the quitting server
+        let users_to_remove = self.database.get_users_by_server(server_name);
+        let user_count = users_to_remove.len();
+        tracing::info!("Found {} users from server {}", user_count, server_name);
         
-        tracing::debug!("Would clean up resources for server {}", server_name);
+        // 2. Remove all users from this server and broadcast their quit
+        for user in users_to_remove {
+            // Remove from nick_to_id mapping
+            {
+                let mut nick_to_id = self.nick_to_id.write().await;
+                nick_to_id.remove(&user.nick);
+            }
+            
+            // Remove from users map
+            {
+                let mut users = self.users.write().await;
+                users.remove(&user.id);
+            }
+            
+            // Remove from database
+            if let Err(e) = self.database.remove_user(user.id) {
+                tracing::warn!("Failed to remove user {} from database: {}", user.nick, e);
+            }
+            
+            // Broadcast QUIT to local clients
+            let quit_msg = Message::with_prefix(
+                Prefix::User {
+                    nick: user.nick.clone(),
+                    user: user.username.clone(),
+                    host: user.host.clone(),
+                },
+                MessageType::Quit,
+                vec![format!("{} {}", server_name, quit_reason)],
+            );
+            
+            if let Err(e) = self.broadcast_system.broadcast_to_all(quit_msg, None).await {
+                tracing::warn!("Failed to broadcast quit for {}: {}", user.nick, e);
+            }
+            
+            tracing::debug!("Removed user {} from server {}", user.nick, server_name);
+        }
+        
+        // 3. Remove server from database
+        if self.database.remove_server(server_name).is_none() {
+            tracing::debug!("Server {} was not in database", server_name);
+        }
+        
+        // 4. Remove from super servers if it's a u-lined server
+        {
+            let mut super_servers = self.super_servers.write().await;
+            super_servers.remove(server_name);
+        }
+        
+        // 5. Remove server connection
+        if let Err(e) = self.server_connections.remove_connection(server_name).await {
+            tracing::warn!("Failed to remove server connection for {}: {}", server_name, e);
+        }
+        
+        // 6. Propagate SQUIT to other connected servers (except source)
+        let squit_msg = Message::with_prefix(
+            Prefix::Server(self.config.server.name.clone()),
+            MessageType::ServerQuit,
+            vec![
+                server_name.to_string(),
+                quit_reason.to_string(),
+            ],
+        );
+        
+        if let Err(e) = self.server_connections.broadcast_message(&squit_msg, Some(server_name)).await {
+            tracing::warn!("Failed to propagate SQUIT for {}: {}", server_name, e);
+        }
+        
+        tracing::info!("Server {} quit processing complete. Cleaned up {} users", 
+                      server_name, user_count);
         
         Ok(())
     }
@@ -562,8 +766,7 @@ impl Server {
     async fn send_server_burst(&self, target_server: &str) -> Result<()> {
         tracing::info!("Sending server burst to {}", target_server);
         
-        // TODO: Implement server burst without extensions
-        // For now, just send basic server information
+        // Send basic server information
         let server_info = Message::with_prefix(
             Prefix::Server(self.config.server.name.clone()),
             MessageType::Server,
@@ -576,7 +779,33 @@ impl Server {
         );
         self.server_connections.send_to_server(target_server, server_info).await?;
         
-        tracing::info!("Server burst to {} completed", target_server);
+        // Send user burst for all local users
+        let users = self.users.read().await;
+        let mut user_count = 0;
+        for user in users.values() {
+            // Only burst users on our server (local users)
+            if user.server == self.config.server.name {
+                let user_burst = Message::new(
+                    MessageType::UserBurst,
+                    vec![
+                        user.nick.clone(),
+                        user.username.clone(),
+                        user.host.clone(),
+                        user.realname.clone(),
+                        user.server.clone(),
+                        user.id.to_string(),
+                        user.registered_at.timestamp().to_string(),
+                    ]
+                );
+                
+                if let Err(e) = self.server_connections.send_to_server(target_server, user_burst).await {
+                    tracing::warn!("Failed to send user burst for {}: {}", user.nick, e);
+                }
+                user_count += 1;
+            }
+        }
+        
+        tracing::info!("Server burst to {} completed ({} users sent)", target_server, user_count);
         Ok(())
     }
     
@@ -863,26 +1092,152 @@ impl Server {
     
     /// Handle NICK propagation from other servers
     async fn handle_server_nick_propagation(&self, server_name: &str, message: Message) -> Result<()> {
-        if message.params.is_empty() {
-            return Err(Error::MessageParse("NICK propagation requires nickname parameter".to_string()));
+        if message.params.len() < 2 {
+            return Err(Error::MessageParse("NICK propagation requires old and new nickname parameters".to_string()));
         }
         
-        let nick = &message.params[0];
-        tracing::debug!("Received NICK propagation from server {}: {}", server_name, nick);
+        let old_nick = message.params[0].clone();
+        let new_nick = message.params[1].clone();
         
-        // TODO: Update user nickname in database and propagate to local clients
-        // This would involve updating the user's nickname and notifying local clients
+        tracing::debug!("Received NICK propagation from server {}: {} -> {}", server_name, old_nick, new_nick);
+        
+        // Get user by old nickname
+        let user = match self.database.get_user_by_nick(&old_nick) {
+            Some(user) => user,
+            None => {
+                tracing::warn!("NICK propagation for unknown user: {}", old_nick);
+                return Ok(());
+            }
+        };
+        
+        // Check if new nickname is already in use
+        if self.database.get_user_by_nick(&new_nick).is_some() {
+            tracing::warn!("NICK propagation failed: {} is already in use", new_nick);
+            return Ok(());
+        }
+        
+        let user_id = user.id;
+        
+        // Update user's nickname
+        let mut updated_user = user.clone();
+        updated_user.nick = new_nick.clone();
+        
+        // Update in database
+        if let Err(e) = self.database.update_user(&user_id, updated_user.clone()) {
+            tracing::error!("Failed to update user nickname in database: {}", e);
+            return Err(e);
+        }
+        
+        // Update in users map
+        {
+            let mut users = self.users.write().await;
+            users.insert(user_id, updated_user.clone());
+        }
+        
+        // Update nick_to_id mapping
+        {
+            let mut nick_to_id = self.nick_to_id.write().await;
+            nick_to_id.remove(&old_nick);
+            nick_to_id.insert(new_nick.clone(), user_id);
+        }
+        
+        // Broadcast NICK change to local clients
+        let nick_msg = Message::with_prefix(
+            Prefix::User {
+                nick: old_nick.clone(),
+                user: user.username.clone(),
+                host: user.host.clone(),
+            },
+            MessageType::Nick,
+            vec![new_nick.clone()],
+        );
+        
+        if let Err(e) = self.broadcast_system.broadcast_to_all(nick_msg, None).await {
+            tracing::warn!("Failed to broadcast NICK change for {}: {}", old_nick, e);
+        }
+        
+        // Propagate to other servers
+        let nick_propagation = Message::with_prefix(
+            Prefix::Server(server_name.to_string()),
+            MessageType::Nick,
+            vec![old_nick.clone(), new_nick.clone()],
+        );
+        
+        if let Err(e) = self.server_connections.broadcast_message(&nick_propagation, Some(server_name)).await {
+            tracing::warn!("Failed to propagate NICK change: {}", e);
+        }
+        
+        tracing::info!("Processed NICK propagation from {}: {} -> {}", server_name, old_nick, new_nick);
         
         Ok(())
     }
     
     /// Handle QUIT propagation from other servers
     async fn handle_server_quit_propagation(&self, server_name: &str, message: Message) -> Result<()> {
-        let reason = message.params.first().map(|s| s.as_str()).unwrap_or("Quit");
-        tracing::debug!("Received QUIT propagation from server {}: {}", server_name, reason);
+        if message.params.is_empty() {
+            return Err(Error::MessageParse("QUIT propagation requires nickname parameter".to_string()));
+        }
         
-        // TODO: Remove user from database and notify local clients
-        // This would involve finding the user by server and removing them
+        let nick = message.params[0].clone();
+        let reason = message.params.get(1).map(|s| s.as_str()).unwrap_or("Quit");
+        
+        tracing::debug!("Received QUIT propagation from server {} for user {}: {}", server_name, nick, reason);
+        
+        // Get user by nickname
+        let user = match self.database.get_user_by_nick(&nick) {
+            Some(user) => user,
+            None => {
+                tracing::warn!("QUIT propagation for unknown user: {}", nick);
+                return Ok(());
+            }
+        };
+        
+        let user_id = user.id;
+        
+        // Remove from nick_to_id mapping
+        {
+            let mut nick_to_id = self.nick_to_id.write().await;
+            nick_to_id.remove(&nick);
+        }
+        
+        // Remove from users map
+        {
+            let mut users = self.users.write().await;
+            users.remove(&user_id);
+        }
+        
+        // Remove from database
+        if let Err(e) = self.database.remove_user(user_id) {
+            tracing::warn!("Failed to remove user {} from database: {}", nick, e);
+        }
+        
+        // Broadcast QUIT to local clients
+        let quit_msg = Message::with_prefix(
+            Prefix::User {
+                nick: user.nick.clone(),
+                user: user.username.clone(),
+                host: user.host.clone(),
+            },
+            MessageType::Quit,
+            vec![reason.to_string()],
+        );
+        
+        if let Err(e) = self.broadcast_system.broadcast_to_all(quit_msg, None).await {
+            tracing::warn!("Failed to broadcast QUIT for {}: {}", nick, e);
+        }
+        
+        // Propagate to other servers
+        let quit_propagation = Message::with_prefix(
+            Prefix::Server(server_name.to_string()),
+            MessageType::Quit,
+            vec![nick.clone(), reason.to_string()],
+        );
+        
+        if let Err(e) = self.server_connections.broadcast_message(&quit_propagation, Some(server_name)).await {
+            tracing::warn!("Failed to propagate QUIT for {}: {}", nick, e);
+        }
+        
+        tracing::info!("Processed QUIT propagation from {} for user {}: {}", server_name, nick, reason);
         
         Ok(())
     }
@@ -893,19 +1248,66 @@ impl Server {
             return Err(Error::MessageParse("User burst requires 7 parameters".to_string()));
         }
         
-        let nick = &message.params[0];
-        let user = &message.params[1];
-        let host = &message.params[2];
-        let _realname = &message.params[3];
-        let _user_server = &message.params[4];
-        let _user_id = &message.params[5];
-        let _connected_at = &message.params[6];
+        let nick = message.params[0].clone();
+        let username = message.params[1].clone();
+        let host = message.params[2].clone();
+        let realname = message.params[3].clone();
+        let user_server = message.params[4].clone();
+        let user_id_str = &message.params[5];
+        let connected_at_str = &message.params[6];
         
-        tracing::debug!("Received user burst from server {}: {}!{}@{}", server_name, nick, user, host);
+        tracing::debug!("Received user burst from server {}: {}!{}@{}", server_name, nick, username, host);
         
-        // TODO: Process user burst without extensions
-        // For now, just log the received user burst
-        tracing::debug!("Processed user burst from {}: {}!{}@{}", server_name, nick, user, host);
+        // Parse user ID
+        let user_id = uuid::Uuid::parse_str(user_id_str)
+            .map_err(|_| Error::MessageParse(format!("Invalid user ID in burst: {}", user_id_str)))?;
+        
+        // Parse connection time
+        let connected_at = connected_at_str.parse::<i64>()
+            .ok()
+            .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
+            .ok_or_else(|| Error::MessageParse(format!("Invalid timestamp in burst: {}", connected_at_str)))?;
+        
+        // Create user object for remote user
+        let user = User {
+            id: user_id,
+            nick: nick.clone(),
+            username: username.clone(),
+            realname: realname.clone(),
+            host: host.clone(),
+            server: user_server.clone(),
+            registered_at: connected_at,
+            last_activity: chrono::Utc::now(),
+            modes: std::collections::HashSet::new(),
+            channels: std::collections::HashSet::new(),
+            registered: true,
+            is_operator: false,
+            operator_flags: std::collections::HashSet::new(),
+            away_message: None,
+            is_bot: false,
+            bot_info: None,
+        };
+        
+        // Add user to database
+        if let Err(e) = self.database.add_user(user.clone()) {
+            tracing::warn!("Failed to add burst user {} to database: {}", nick, e);
+            // Don't fail the whole burst if one user fails - might be duplicate
+        }
+        
+        // Add to users map
+        {
+            let mut users = self.users.write().await;
+            users.insert(user_id, user.clone());
+        }
+        
+        // Add to nick_to_id map
+        {
+            let mut nick_to_id = self.nick_to_id.write().await;
+            nick_to_id.insert(nick.clone(), user_id);
+        }
+        
+        tracing::info!("Processed user burst from {}: {} ({}!{}@{})", 
+                      server_name, nick, username, user_server, host);
         
         Ok(())
     }
@@ -916,49 +1318,110 @@ impl Server {
             return Err(Error::MessageParse("Server burst requires 4 parameters".to_string()));
         }
         
-        let server_name_burst = &message.params[0];
-        let _description = &message.params[1];
-        let hop_count = &message.params[2];
-        let _version = &message.params[3];
+        let burst_server_name = message.params[0].clone();
+        let description = message.params[1].clone();
+        let hop_count_str = &message.params[2];
+        let version = message.params[3].clone();
         
-        tracing::debug!("Received server burst from server {}: {} (hop: {})", server_name, server_name_burst, hop_count);
+        tracing::debug!("Received server burst from server {}: {} (hop: {})", server_name, burst_server_name, hop_count_str);
         
-        // TODO: Process server burst without extensions
-        // For now, just log the received server burst
-        tracing::debug!("Processed server burst from {}: {} (hop: {})", server_name, server_name_burst, hop_count);
+        // Parse hop count
+        let hop_count: u32 = hop_count_str.parse()
+            .map_err(|_| Error::MessageParse(format!("Invalid hop count in server burst: {}", hop_count_str)))?;
+        
+        // Create server info
+        let server_info = crate::database::ServerInfo {
+            name: burst_server_name.clone(),
+            description: description.clone(),
+            version: version.clone(),
+            hopcount: hop_count,
+            connected_at: chrono::Utc::now(),
+            is_super_server: self.server_connections.is_super_server(&burst_server_name),
+            user_count: 0,
+        };
+        
+        // Add server to database
+        if let Err(e) = self.database.add_server(server_info) {
+            tracing::warn!("Failed to add burst server {} to database: {}", burst_server_name, e);
+            // Don't fail - might already exist
+        }
+        
+        tracing::info!("Processed server burst from {}: {} (hop: {}, version: {})", 
+                      server_name, burst_server_name, hop_count, version);
         
         Ok(())
     }
     
     /// Handle channel burst from other servers
     async fn handle_channel_burst_received(&self, server_name: &str, message: Message) -> Result<()> {
-        tracing::debug!("Received channel burst from server {}: {:?}", server_name, message.params);
+        if message.params.is_empty() {
+            return Err(Error::MessageParse("Channel burst requires at least 1 parameter".to_string()));
+        }
         
-        // TODO: Process channel burst without extensions
-        // For now, just log the received channel burst
-        tracing::debug!("Processed channel burst from {}: {:?}", server_name, message.params);
+        let channel_name = message.params[0].clone();
+        tracing::debug!("Received channel burst from server {}: {}", server_name, channel_name);
+        
+        // Parse channel burst parameters
+        // Format: CBURST #channel [topic] [modes] [members...]
+        let topic = if message.params.len() > 1 && !message.params[1].is_empty() {
+            Some(message.params[1].clone())
+        } else {
+            None
+        };
+        
+        let modes = if message.params.len() > 2 {
+            message.params[2].chars().collect::<std::collections::HashSet<char>>()
+        } else {
+            std::collections::HashSet::new()
+        };
+        
+        // Create channel info
+        let channel_info = crate::database::ChannelInfo {
+            name: channel_name.clone(),
+            topic,
+            user_count: 0, // Will be updated as members join
+            modes,
+        };
+        
+        // Add channel to database
+        if let Err(e) = self.database.add_channel(channel_info) {
+            tracing::debug!("Channel {} may already exist: {}", channel_name, e);
+            // Don't fail - channel might already exist
+        }
+        
+        // Process channel members if provided (params 3+)
+        let mut member_count = 0;
+        if message.params.len() > 3 {
+            for i in 3..message.params.len() {
+                let member = &message.params[i];
+                if !member.is_empty() {
+                    // Add user to channel
+                    if let Err(e) = self.database.add_user_to_channel(member, &channel_name) {
+                        tracing::warn!("Failed to add user {} to channel {}: {}", member, channel_name, e);
+                    } else {
+                        member_count += 1;
+                    }
+                }
+            }
+        }
+        
+        tracing::info!("Processed channel burst from {}: {} ({} members)", 
+                      server_name, channel_name, member_count);
         
         Ok(())
     }
     
     /// Handle PASS command for server connections
     async fn handle_server_password(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
-        let _password = &message.params[0];
+        let password = &message.params[0];
         
-        // Find the server connection by client_id
-        let connection_handler = self.connection_handler.read().await;
-        if let Some(_client) = connection_handler.get_client(&client_id) {
-            // For now, we'll validate against configured server links
-            // In a full implementation, we'd need to track which server this client represents
+        // Store the password in the client for later validation when SERVER command is received
+        let mut connection_handler = self.connection_handler.write().await;
+        if let Some(client) = connection_handler.get_client_mut(&client_id) {
+            client.server_password = Some(password.clone());
+            client.set_state(ClientState::PasswordProvided);
             
-            // TODO: Implement proper server password validation
-            // This would involve finding the server name associated with this client_id
-            // and validating against the configured server links
-            
-            tracing::info!("Server password validation (to be implemented)");
-            
-            // For now, just update the connection state
-            // In a real implementation, we'd need to find the server name
+            tracing::debug!("Server password received for client {}", client_id);
             Ok(())
         } else {
             Err(Error::Server("Client not found".to_string()))
@@ -1085,6 +1548,10 @@ impl Server {
             MessageType::ServerQuit => {
                 self.handle_operator_squit(client_id, message).await?;
             }
+            MessageType::Server => {
+                // Handle initial server registration from new connections
+                self.handle_initial_server_registration(client_id, message).await?;
+            }
             _ => {
                 // Command not handled by core
                 tracing::debug!("Unhandled command: {:?}", message.command);
@@ -1172,30 +1639,74 @@ impl Server {
         }
         drop(nick_to_id);
         
+        // Check if this is a nickname change or initial registration
+        let connection_handler = self.connection_handler.read().await;
+        let old_nick = if let Some(client) = connection_handler.get_client(&client_id) {
+            client.user.as_ref().map(|u| u.nick.clone())
+        } else {
+            None
+        };
+        drop(connection_handler);
+        
         // Register nickname
         let mut connection_handler = self.connection_handler.write().await;
         if let Some(client) = connection_handler.get_client_mut(&client_id) {
             client.set_state(ClientState::NickSet);
-            // Implement nickname setting in client
-            // TODO: Integrate with user object nickname update
             
-            // In production, this would:
-            // 1. Update the user object with the new nickname
-            // 2. Update the database with the nickname change
-            // 3. Notify modules of the nickname change
-            
-            tracing::debug!("Client {} nickname set to: {}", client_id, &message.params[0]);
-        }
-        
-        // Propagate NICK change to other servers
-        if let Some(client) = connection_handler.get_client(&client_id) {
-            if client.is_registered() {
-                let nick_propagation = Message::new(
+            // If user object exists, update the nickname
+            if let Some(ref mut user) = client.user {
+                let old_nick = user.nick.clone();
+                user.nick = nick.clone();
+                
+                // Update in database
+                if let Err(e) = self.database.update_user(&user.id, user.clone()) {
+                    tracing::error!("Failed to update user nickname in database: {}", e);
+                }
+                
+                // Update in users map
+                {
+                    let mut users = self.users.write().await;
+                    users.insert(user.id, user.clone());
+                }
+                
+                // Update nick_to_id mapping
+                {
+                    let mut nick_to_id = self.nick_to_id.write().await;
+                    nick_to_id.remove(&old_nick);
+                    nick_to_id.insert(nick.clone(), user.id);
+                }
+                
+                // Broadcast NICK change to local clients
+                let nick_msg = Message::with_prefix(
+                    Prefix::User {
+                        nick: old_nick.clone(),
+                        user: user.username.clone(),
+                        host: user.host.clone(),
+                    },
                     MessageType::Nick,
-                    vec![nick.clone()]
+                    vec![nick.clone()],
                 );
+                
+                if let Err(e) = self.broadcast_system.broadcast_to_all(nick_msg, None).await {
+                    tracing::warn!("Failed to broadcast NICK change: {}", e);
+                }
+                
+                // Propagate NICK change to other servers
+                let nick_propagation = Message::with_prefix(
+                    Prefix::Server(self.config.server.name.clone()),
+                    MessageType::Nick,
+                    vec![old_nick, nick.clone()],
+                );
+                
                 drop(connection_handler); // Release the lock before async call
-                self.propagate_to_servers(nick_propagation).await?;
+                
+                if let Err(e) = self.server_connections.broadcast_to_servers(nick_propagation).await {
+                    tracing::warn!("Failed to propagate NICK change: {}", e);
+                }
+                
+                tracing::info!("Client {} nickname changed to: {}", client_id, nick);
+            } else {
+                tracing::debug!("Client {} nickname set to: {}", client_id, nick);
             }
         }
         
@@ -1299,18 +1810,22 @@ impl Server {
     }
     
     /// Handle PONG command
-    async fn handle_pong(&self, client_id: uuid::Uuid, _message: Message) -> Result<()> {
-        // Implement ping/pong handling
-        // TODO: Integrate with connection timeout management
+    async fn handle_pong(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
+        let token = message.params.first().map(|s| s.as_str()).unwrap_or("");
         
-        // Update last activity time
+        // Update last pong time and verify token
         let mut connection_handler = self.connection_handler.write().await;
-        if let Some(_client) = connection_handler.get_client_mut(&client_id) {
-            // In production, would update last activity timestamp:
-            // client.update_last_activity();
-            // client.reset_ping_timeout();
+        if let Some(client) = connection_handler.get_client_mut(&client_id) {
+            // Record pong received (this also resets unanswered pings and updates activity)
+            client.timing.record_pong_received();
             
-            tracing::debug!("Received PONG from client {}", client_id);
+            tracing::debug!("Received PONG from client {} with token: {}", client_id, token);
+            
+            // Check if client has timed out
+            if client.timing.is_timed_out() {
+                tracing::warn!("Client {} has timed out despite PONG", client_id);
+                // Connection will be cleaned up by timeout checker
+            }
         }
         
         Ok(())

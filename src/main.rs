@@ -90,7 +90,8 @@ async fn main() -> anyhow::Result<()> {
     config.validate()?;
     
     // Create and initialize server
-    let mut server = Server::new(config).await;
+    let config_path = cli.config.to_string_lossy().to_string();
+    let mut server = Server::new_with_config_path(config, config_path).await;
     server.init().await?;
     
     // Start server

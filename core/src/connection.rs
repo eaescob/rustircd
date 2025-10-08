@@ -225,6 +225,16 @@ impl ConnectionHandler {
         self.clients.get_mut(id)
     }
     
+    /// Get iterator over all clients
+    pub fn iter_clients(&self) -> impl Iterator<Item = (&Uuid, &Client)> {
+        self.clients.iter()
+    }
+    
+    /// Remove a client by ID
+    pub fn remove_client(&mut self, id: &Uuid) -> Option<Client> {
+        self.clients.remove(id)
+    }
+    
     /// Get client by nickname
     pub fn get_client_by_nick(&self, nick: &str) -> Option<&Client> {
         self.nick_to_id.get(nick).and_then(|id| self.clients.get(id))
@@ -252,15 +262,6 @@ impl ConnectionHandler {
         // Register new nickname
         self.nick_to_id.insert(nick, client_id);
         Ok(())
-    }
-    
-    /// Remove client
-    pub fn remove_client(&mut self, client_id: &Uuid) {
-        if let Some(client) = self.clients.remove(client_id) {
-            if let Some(nick) = client.nickname() {
-                self.nick_to_id.remove(nick);
-            }
-        }
     }
     
     /// Get all clients

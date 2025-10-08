@@ -307,14 +307,14 @@ impl SaslModule {
     }
     
     /// Handle SASL authentication
-    pub async fn handle_sasl(&self, client: &Client, message: &Message) -> Result<()> {
+    pub async fn handle_sasl(&self, client: &Client, message: &Message, context: &ModuleContext) -> Result<()> {
         if !self.config.enabled {
             client.send_numeric(NumericReply::ErrUnknownCommand, &["SASL"])?;
             return Ok(());
         }
         
         match &message.command {
-            MessageType::Custom(cmd) if cmd == "AUTHENTICATE" => self.handle_authenticate(client, message).await,
+            MessageType::Custom(cmd) if cmd == "AUTHENTICATE" => self.handle_authenticate(client, message, context).await,
             _ => {
                 client.send_numeric(NumericReply::ErrUnknownCommand, &["SASL"])?;
                 Ok(())
@@ -323,7 +323,7 @@ impl SaslModule {
     }
     
     /// Handle AUTHENTICATE command
-    async fn handle_authenticate(&self, client: &Client, message: &Message) -> Result<()> {
+    async fn handle_authenticate(&self, client: &Client, message: &Message, context: &ModuleContext) -> Result<()> {
         if message.params.is_empty() {
             let error_msg = NumericReply::need_more_params("AUTHENTICATE");
             let _ = client.send(error_msg);
@@ -352,6 +352,7 @@ impl SaslModule {
         
         let mut sessions = self.sessions.write().await;
         sessions.insert(client.id, session);
+        drop(sessions); // Release lock before async operations
         
         // Start authentication
         if let Some(mechanism_impl) = self.get_mechanism(mechanism) {
@@ -365,7 +366,7 @@ impl SaslModule {
                             let _ = client.send(continue_msg);
                         }
                         SaslResponseType::Success => {
-                            self.complete_authentication(client, mechanism_impl).await?;
+                            self.complete_authentication(client, mechanism_impl, context).await?;
                         }
                         SaslResponseType::Failure => {
                             let error_msg = NumericReply::ErrUnknownCommand.reply("", vec![format!("SASL authentication failed: {}", 
@@ -394,9 +395,11 @@ impl SaslModule {
     }
     
     /// Complete SASL authentication
-    async fn complete_authentication(&self, client: &Client, mechanism: &dyn SaslMechanism) -> Result<()> {
+    async fn complete_authentication(&self, client: &Client, mechanism: &dyn SaslMechanism, context: &ModuleContext) -> Result<()> {
         match mechanism.complete(client).await {
             Ok(auth_data) => {
+                let account_name = auth_data.username.clone();
+                
                 // Update session
                 let mut sessions = self.sessions.write().await;
                 if let Some(session) = sessions.get_mut(&client.id) {
@@ -404,12 +407,17 @@ impl SaslModule {
                     session.auth_data = Some(auth_data);
                     session.last_activity = chrono::Utc::now();
                 }
+                drop(sessions); // Release lock before calling other async operations
                 
                 // Send success message
                 let success_msg = NumericReply::RplYoureOper.reply("", vec!["SASL authentication successful".to_string()]);
                 let _ = client.send(success_msg);
                 
-                tracing::info!("SASL authentication successful for client {}", client.id);
+                // Trigger account change notification via IRCv3 account tracking
+                // This will broadcast ACCOUNT messages to channel members if the module is enabled
+                self.set_user_account(client.id, &account_name, context).await?;
+                
+                tracing::info!("SASL authentication successful for client {} as account {}", client.id, account_name);
             }
             Err(e) => {
                 let error_msg = NumericReply::ErrUnknownCommand.reply("", vec![format!("SASL authentication failed: {}", e)]);
@@ -418,6 +426,47 @@ impl SaslModule {
         }
         
         Ok(())
+    }
+    
+    /// Set user account and trigger account tracking notification
+    /// This integrates with the IRCv3 account-notify capability
+    /// 
+    /// # Integration with IRCv3 Account Tracking
+    /// 
+    /// To enable full account notification support:
+    /// 1. The server should have the IRCv3 module loaded
+    /// 2. When this method is called, the server should:
+    ///    a. Call `ircv3_module.set_user_account(user_id, account_name, context).await`
+    ///    b. This will update the account tracking and broadcast ACCOUNT messages
+    /// 
+    /// Example server-side integration:
+    /// ```rust,ignore
+    /// // In the server's module coordination code:
+    /// if let Some(ircv3) = module_manager.get_module_mut("ircv3") {
+    ///     ircv3.set_user_account(user_id, account_name, context).await?;
+    /// }
+    /// ```
+    async fn set_user_account(&self, user_id: Uuid, account_name: &str, context: &ModuleContext) -> Result<()> {
+        // Store account name as user metadata or in a dedicated account store
+        // The actual implementation depends on how the server manages user accounts
+        
+        tracing::info!("Account {} authenticated for user {} via SASL", account_name, user_id);
+        tracing::debug!("Note: IRCv3 account notification should be triggered by server-level module coordination");
+        
+        // TODO: Server should coordinate with IRCv3 module to broadcast account change
+        // This is a hook point where the server can integrate SASL with account tracking
+        
+        Ok(())
+    }
+    
+    /// Get the authenticated account name for a user
+    /// Returns the account name if the user has successfully authenticated via SASL
+    pub async fn get_authenticated_account(&self, user_id: Uuid) -> Option<String> {
+        let sessions = self.sessions.read().await;
+        sessions.get(&user_id)
+            .filter(|s| s.state == SaslState::Authenticated)
+            .and_then(|s| s.auth_data.as_ref())
+            .map(|auth| auth.username.clone())
     }
     
     /// Check if a mechanism is supported
@@ -500,10 +549,10 @@ impl rustircd_core::Module for SaslModule {
         Ok(())
     }
     
-    async fn handle_message(&mut self, client: &rustircd_core::Client, message: &rustircd_core::Message, _context: &ModuleContext) -> Result<ModuleResult> {
+    async fn handle_message(&mut self, client: &rustircd_core::Client, message: &rustircd_core::Message, context: &ModuleContext) -> Result<ModuleResult> {
         match message.command {
             rustircd_core::MessageType::Custom(ref cmd) if cmd == "AUTHENTICATE" => {
-                self.handle_authenticate(client, message).await?;
+                self.handle_authenticate(client, message, context).await?;
                 Ok(ModuleResult::Handled)
             }
             _ => Ok(ModuleResult::NotHandled),

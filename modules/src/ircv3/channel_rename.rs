@@ -1,6 +1,6 @@
 //! IRCv3 Channel Rename
 
-use rustircd_core::{Error, Result};
+use rustircd_core::{Error, Result, Message, MessageType, module::ModuleContext};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -192,6 +192,74 @@ impl ChannelRename {
             user_rename_counts,
             reason_counts,
         }
+    }
+    
+    /// Approve and execute channel rename with database update and broadcasting
+    pub async fn execute_rename(&mut self, old_name: &str, context: &ModuleContext) -> Result<RenameRecord> {
+        // Get the pending rename
+        let rename_record = self.approve_rename(old_name)?;
+        
+        // Get all channel members before removing old channel
+        let members = context.get_channel_users(old_name);
+        
+        // Only proceed if channel has members
+        if !members.is_empty() {
+            // Create new channel info
+            // Note: Since Database doesn't have get_channel, we create basic channel info
+            let new_channel = rustircd_core::database::ChannelInfo {
+                name: rename_record.new_name.clone(),
+                topic: None, // Topic will be preserved separately if needed
+                user_count: members.len() as u32,
+                modes: std::collections::HashSet::new(),
+            };
+            
+            // Add new channel to database
+            context.add_channel(new_channel)?;
+            
+            // Update each member's channel list
+            for member_nick in &members {
+                // Add member to new channel
+                context.add_user_to_channel(member_nick, &rename_record.new_name)?;
+            }
+            
+            // Create RENAME message to notify all members
+            let rename_msg = Message::new(
+                MessageType::Custom("RENAME".to_string()),
+                vec![
+                    old_name.to_string(),
+                    rename_record.new_name.clone(),
+                    rename_record.reason.clone().unwrap_or_default(),
+                ],
+            );
+            
+            // Broadcast to all channel members
+            for member_nick in &members {
+                let _ = context.send_to_user(member_nick, rename_msg.clone()).await;
+            }
+            
+            // Remove old channel from database
+            context.remove_channel(old_name);
+            
+            tracing::info!("Executed channel rename: {} -> {}", old_name, rename_record.new_name);
+        }
+        
+        Ok(rename_record)
+    }
+    
+    /// Request and execute channel rename in one step
+    pub async fn request_and_execute_rename(
+        &mut self,
+        old_name: String,
+        new_name: String,
+        user_id: Uuid,
+        reason: Option<String>,
+        context: &ModuleContext,
+    ) -> Result<RenameRecord> {
+        // Request the rename
+        self.request_rename(old_name.clone(), new_name, user_id, reason)?;
+        
+        // Execute the rename
+        self.execute_rename(&old_name, context).await
     }
 }
 

@@ -204,7 +204,7 @@ impl Module for Ircv3Module {
         Ok(())
     }
     
-    async fn handle_message(&mut self, client: &Client, message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
+    async fn handle_message(&mut self, client: &Client, message: &Message, context: &ModuleContext) -> Result<ModuleResult> {
         match &message.command {
             rustircd_core::MessageType::Cap => {
                 self.capability_negotiation.handle_cap(client, message).await?;
@@ -213,7 +213,7 @@ impl Module for Ircv3Module {
             rustircd_core::MessageType::Custom(cmd) => {
                 match cmd.as_str() {
                     "TAGMSG" => {
-                        self.message_tags.handle_tagmsg(client, message).await?;
+                        self.message_tags.handle_tagmsg(client, message, context).await?;
                         Ok(ModuleResult::Handled)
                     }
                     "AUTHENTICATE" => {
@@ -278,6 +278,39 @@ impl Module for Ircv3Module {
 }
 
 impl Ircv3Module {
+    /// Set user account and broadcast account change notification
+    /// This should be called by SASL, services, or any authentication system
+    /// when a user successfully authenticates
+    pub async fn set_user_account(&mut self, user_id: uuid::Uuid, account_name: String, context: &ModuleContext) -> Result<()> {
+        // Set the account in the tracking system
+        self.account_tracking.set_user_account(user_id, account_name.clone())?;
+        
+        // Broadcast the account change to all channel members
+        self.account_tracking.broadcast_account_change(user_id, Some(&account_name), context).await?;
+        
+        tracing::info!("Account {} set for user {} with broadcast", account_name, user_id);
+        Ok(())
+    }
+    
+    /// Remove user account and broadcast the change
+    /// This should be called when a user logs out or disconnects
+    pub async fn remove_user_account(&mut self, user_id: uuid::Uuid, context: &ModuleContext) -> Result<Option<String>> {
+        // Remove the account from tracking
+        let old_account = self.account_tracking.remove_user_account(user_id);
+        
+        // Broadcast the account removal (shows as "*" to other users)
+        if old_account.is_some() {
+            self.account_tracking.broadcast_account_change(user_id, None, context).await?;
+        }
+        
+        Ok(old_account)
+    }
+    
+    /// Get user's account name
+    pub fn get_user_account(&self, user_id: &uuid::Uuid) -> Option<&String> {
+        self.account_tracking.get_user_account(user_id)
+    }
+    
     /// Enable extended join for a client
     pub async fn enable_extended_join(&mut self, client_id: uuid::Uuid) {
         let mut ej = self.extended_join.lock().await;

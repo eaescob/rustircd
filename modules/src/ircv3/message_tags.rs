@@ -1,6 +1,6 @@
 //! IRCv3 Message Tags
 
-use rustircd_core::{Client, Message, Error, Result};
+use rustircd_core::{Client, Message, Error, Result, module::ModuleContext};
 use std::collections::HashMap;
 
 /// Message tags handler
@@ -39,7 +39,7 @@ impl MessageTags {
         Ok(())
     }
     
-    pub async fn handle_tagmsg(&self, client: &Client, message: &Message) -> Result<()> {
+    pub async fn handle_tagmsg(&self, client: &Client, message: &Message, context: &ModuleContext) -> Result<()> {
         if !client.supports_ircv3() {
             return Err(Error::User("Client does not support IRCv3".to_string()));
         }
@@ -51,34 +51,28 @@ impl MessageTags {
         let target = &message.params[0];
         
         // Process message tags
-        if let Some(ref _prefix) = message.prefix {
-            // Implement tag parsing and validation
-            // TODO: Integrate with full message tag validation system
-            
-            let tags = if let Some(ref prefix) = message.prefix {
-                Self::parse_tags(&prefix.to_string())
+        let tags = if let Some(ref prefix) = message.prefix {
+            Self::parse_tags(&prefix.to_string())
+        } else {
+            HashMap::new()
+        };
+        
+        tracing::info!("Client {} sent TAGMSG to {} with tags: {:?}", client.id, target, tags);
+        
+        // Check if target is a channel or user
+        if target.starts_with('#') || target.starts_with('&') {
+            // Send to channel
+            context.send_to_channel(target, message.clone()).await?;
+        } else {
+            // Send to user
+            if let Some(_user) = context.get_user_by_nick(target) {
+                context.send_to_user(target, message.clone()).await?;
             } else {
-                HashMap::new()
-            };
-            tracing::info!("Client {} sent TAGMSG to {} with tags: {:?}", client.id, target, tags);
-            
-            // In production, would validate tags:
-            // - Check tag format and allowed characters
-            // - Validate tag values against specifications
-            // - Handle client-only vs server-only tags
-            // - Apply tag policies and restrictions
+                return Err(Error::User(format!("No such nick: {}", target)));
+            }
         }
         
-        // Implement TAGMSG forwarding
-        // TODO: Integrate with target user lookup and message delivery
-        
-        // In production, would:
-        // 1. Look up target user by nickname
-        // 2. Check if target user supports message tags
-        // 3. Forward TAGMSG with appropriate tags
-        // 4. Handle delivery errors
-        
-        tracing::debug!("Would forward TAGMSG from {} to target {}", client.id, target);
+        tracing::debug!("Forwarded TAGMSG from {} to target {}", client.id, target);
         Ok(())
     }
     

@@ -91,19 +91,15 @@ impl CapabilityNegotiation {
         let capabilities = self.get_available_capabilities();
         let cap_list = capabilities.join(" ");
         
-        let _response = Message::new(
+        let response = Message::new(
             rustircd_core::MessageType::Custom("CAP".to_string()),
             vec!["*".to_string(), "LS".to_string(), cap_list.clone()],
         );
         
-        // Implement capability list response to client
-        // TODO: Integrate with proper client message sending
+        // Send the CAP LS message to client
+        client.send(response)?;
         
-        tracing::info!("Sending capabilities to client {}: {}", client.id, cap_list);
-        
-        // In production, would send the CAP LS message to client:
-        // client.send(cap_ls_msg)?;
-        tracing::debug!("Would send CAP LS to client {}: {}", client.id, cap_list);
+        tracing::info!("Sent capabilities to client {}: {}", client.id, cap_list);
         
         Ok(())
     }
@@ -127,34 +123,24 @@ impl CapabilityNegotiation {
         
         // Send ACK for supported capabilities
         if !acked_caps.is_empty() {
-            let _ack_msg = Message::new(
+            let ack_msg = Message::new(
                 rustircd_core::MessageType::Custom("CAP".to_string()),
                 vec!["*".to_string(), "ACK".to_string(), acked_caps.join(" ")],
             );
-            // Implement ACK response to client
-            // TODO: Integrate with proper client message sending
             
+            client.send(ack_msg)?;
             tracing::info!("ACK capabilities for client {}: {}", client.id, acked_caps.join(" "));
-            
-            // In production, would send ACK message to client:
-            // client.send(ack_msg)?;
-            tracing::debug!("Would send CAP ACK to client {}: {}", client.id, acked_caps.join(" "));
         }
         
         // Send NAK for unsupported capabilities
         if !nacked_caps.is_empty() {
-            let _nak_msg = Message::new(
+            let nak_msg = Message::new(
                 rustircd_core::MessageType::Custom("CAP".to_string()),
                 vec!["*".to_string(), "NAK".to_string(), nacked_caps.join(" ")],
             );
-            // Implement NAK response to client
-            // TODO: Integrate with proper client message sending
             
+            client.send(nak_msg)?;
             tracing::info!("NAK capabilities for client {}: {}", client.id, nacked_caps.join(" "));
-            
-            // In production, would send NAK message to client:
-            // client.send(nak_msg)?;
-            tracing::debug!("Would send CAP NAK to client {}: {}", client.id, nacked_caps.join(" "));
         }
         
         Ok(())

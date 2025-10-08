@@ -1,6 +1,6 @@
 //! IRCv3 Batch Messages
 
-use rustircd_core::{Message, Error, Result};
+use rustircd_core::{Message, Error, Result, module::ModuleContext};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -172,5 +172,44 @@ impl Batch {
         } else {
             Err(Error::User("Invalid batch message format".to_string()))
         }
+    }
+    
+    /// Start a batch and broadcast to a channel
+    pub async fn start_batch_with_broadcast(&mut self, batch_id: String, batch_type: String, params: Vec<String>, creator: Uuid, channel: &str, context: &ModuleContext) -> Result<()> {
+        // Start the batch locally
+        self.start_batch(batch_id.clone(), batch_type.clone(), params.clone(), creator)?;
+        
+        // Create batch start message
+        let batch_msg = Self::create_batch_message(&batch_id, &batch_type, &params);
+        
+        // Broadcast to channel
+        context.send_to_channel(channel, batch_msg).await?;
+        
+        Ok(())
+    }
+    
+    /// End a batch and broadcast to a channel
+    pub async fn end_batch_with_broadcast(&mut self, batch_id: &str, channel: &str, context: &ModuleContext) -> Result<Option<BatchInfo>> {
+        // End the batch locally
+        let batch_info = self.end_batch(batch_id)?;
+        
+        // Create batch end message
+        let batch_end_msg = Self::create_batch_end_message(batch_id);
+        
+        // Broadcast to channel
+        context.send_to_channel(channel, batch_end_msg).await?;
+        
+        Ok(batch_info)
+    }
+    
+    /// Broadcast batch messages to channel members
+    pub async fn broadcast_batch_to_channel(&self, batch_id: &str, channel: &str, context: &ModuleContext) -> Result<()> {
+        if let Some(batch_info) = self.get_batch(batch_id) {
+            // Send all messages in the batch
+            for msg in &batch_info.messages {
+                context.send_to_channel(channel, msg.clone()).await?;
+            }
+        }
+        Ok(())
     }
 }

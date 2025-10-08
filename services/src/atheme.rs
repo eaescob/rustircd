@@ -328,6 +328,18 @@ impl AthemeIntegration {
             "PRIVMSG" => {
                 self.handle_atheme_privmsg_with_context(message, context).await?;
             }
+            "ENCAP" => {
+                // ENCAP LOGIN is used by Atheme for account identification
+                if message.params.len() > 0 && message.params[0] == "LOGIN" {
+                    self.handle_atheme_encap_login(message, context).await?;
+                } else {
+                    tracing::debug!("Received ENCAP command: {:?}", message);
+                }
+            }
+            "METADATA" => {
+                // METADATA is used to set account information
+                self.handle_atheme_metadata(message, context).await?;
+            }
             _ => {
                 // Handle other Atheme messages
                 tracing::debug!("Received Atheme message: {:?}", message);
@@ -579,8 +591,20 @@ impl AthemeIntegration {
         
         tracing::info!("SVSMODE command from Atheme: {} {}", target, modes);
         
-        // TODO: Apply mode changes - this would need integration with the mode system
-        // For now, just log and broadcast
+        // Check if the mode change includes +r (registered/identified)
+        // This is the standard way Atheme indicates a user has identified with NickServ
+        if modes.contains("+r") {
+            tracing::info!("User {} identified with NickServ (mode +r)", target);
+            
+            // Trigger account notification
+            // The account name is typically the nickname for identified users
+            self.trigger_account_notification(target, Some(target), context).await?;
+        } else if modes.contains("-r") {
+            tracing::info!("User {} unidentified/logged out (mode -r)", target);
+            
+            // Trigger account removal notification
+            self.trigger_account_notification(target, None, context).await?;
+        }
         
         // Broadcast SVSMODE to other servers
         let svsmode_message = Message::with_prefix(
@@ -751,6 +775,103 @@ impl AthemeIntegration {
         }
         Ok(())
     }
+    
+    /// Trigger account notification via IRCv3
+    /// This should be called when NickServ identifies or logs out a user
+    /// 
+    /// # Integration with IRCv3
+    /// 
+    /// The server should coordinate this with the IRCv3 module:
+    /// ```rust,ignore
+    /// if let Some(ircv3_module) = module_manager.get_module_mut("ircv3") {
+    ///     if let Some(account_name) = account {
+    ///         ircv3_module.set_user_account(user_id, account_name, context).await?;
+    ///     } else {
+    ///         ircv3_module.remove_user_account(user_id, context).await?;
+    ///     }
+    /// }
+    /// ```
+    async fn trigger_account_notification(&self, nick: &str, account: Option<&str>, context: &ServiceContext) -> Result<()> {
+        // Get user from database
+        if let Some(user) = context.get_user_by_nick(nick).await {
+            let user_id = user.id;
+            
+            if let Some(account_name) = account {
+                tracing::info!("NickServ: User {} identified as account {}", nick, account_name);
+                
+                // This is where the server should coordinate with IRCv3 module
+                // to trigger the account notification broadcast
+                // 
+                // Server integration example:
+                // if let Some(ircv3) = module_manager.get_module_mut("ircv3") {
+                //     ircv3.set_user_account(user_id, account_name.to_string(), context).await?;
+                // }
+                
+                tracing::debug!("Account notification should be triggered: {} -> {}", nick, account_name);
+            } else {
+                tracing::info!("NickServ: User {} logged out", nick);
+                
+                // This is where the server should coordinate with IRCv3 module
+                // to trigger the account removal broadcast
+                //
+                // Server integration example:
+                // if let Some(ircv3) = module_manager.get_module_mut("ircv3") {
+                //     ircv3.remove_user_account(user_id, context).await?;
+                // }
+                
+                tracing::debug!("Account removal notification should be triggered: {}", nick);
+            }
+        } else {
+            tracing::warn!("Cannot trigger account notification for unknown user: {}", nick);
+        }
+        
+        Ok(())
+    }
+    
+    /// Handle NickServ ENCAP CERTFP or LOGIN command
+    /// This is another way Atheme can signal account identification
+    async fn handle_atheme_encap_login(&self, message: &Message, context: &ServiceContext) -> Result<()> {
+        if message.params.len() < 2 {
+            return Err(Error::MessageParse("ENCAP LOGIN requires at least 2 parameters".to_string()));
+        }
+        
+        let nick = &message.params[0];
+        let account_name = &message.params[1];
+        
+        tracing::info!("ENCAP LOGIN from Atheme: {} identified as {}", nick, account_name);
+        
+        // Trigger account notification
+        self.trigger_account_notification(nick, Some(account_name), context).await?;
+        
+        Ok(())
+    }
+    
+    /// Handle METADATA command for account information
+    /// Atheme uses METADATA to set account information on users
+    async fn handle_atheme_metadata(&self, message: &Message, context: &ServiceContext) -> Result<()> {
+        if message.params.len() < 3 {
+            return Err(Error::MessageParse("METADATA requires at least 3 parameters".to_string()));
+        }
+        
+        let target = &message.params[0];
+        let key = &message.params[1];
+        let value = &message.params[2];
+        
+        tracing::debug!("METADATA from Atheme: {} {} = {}", target, key, value);
+        
+        // Check if this is account metadata
+        if key == "accountname" || key == "ACCOUNTNAME" {
+            if value != "*" && !value.is_empty() {
+                tracing::info!("User {} account set to {} via METADATA", target, value);
+                self.trigger_account_notification(target, Some(value), context).await?;
+            } else {
+                tracing::info!("User {} account cleared via METADATA", target);
+                self.trigger_account_notification(target, None, context).await?;
+            }
+        }
+        
+        Ok(())
+    }
 }
 
 impl Clone for AthemeIntegration {
@@ -855,8 +976,10 @@ impl Service for AthemeServicesModule {
         if let MessageType::Custom(cmd) = &message.command {
             match cmd.as_str() {
                 "UID" | "SJOIN" | "SVSNICK" | "SVSMODE" | "SVSJOIN" | "SVSPART" | 
-                "SETHOST" | "SVS2MODE" | "NOTICE" | "PRIVMSG" | "PING" | "PONG" | "SQUIT" => {
+                "SETHOST" | "SVS2MODE" | "NOTICE" | "PRIVMSG" | "PING" | "PONG" | "SQUIT" |
+                "ENCAP" | "METADATA" => {
                     // These are Atheme protocol commands
+                    // ENCAP and METADATA are particularly important for NickServ account notifications
                     self.integration.handle_atheme_message_with_context(message, context).await?;
                     Ok(ServiceResult::Handled)
                 }

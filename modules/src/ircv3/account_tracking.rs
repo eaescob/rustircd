@@ -1,6 +1,6 @@
 //! IRCv3 Account Tracking
 
-use rustircd_core::{User, Error, Result};
+use rustircd_core::{User, Error, Result, Message, MessageType, module::ModuleContext};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -116,5 +116,65 @@ impl AccountTracking {
         } else {
             None
         }
+    }
+    
+    /// Broadcast account change to relevant channel members
+    pub async fn broadcast_account_change(&self, user_id: Uuid, account: Option<&str>, context: &ModuleContext) -> Result<()> {
+        // Get the user's nickname
+        if let Some(user) = context.database.get_user(&user_id) {
+            // Get all channels the user is in
+            let channels = context.database.get_user_channels(&user.nick);
+            
+            for channel in channels {
+                // Get all members of the channel
+                let members = context.get_channel_users(&channel);
+                
+                // Create ACCOUNT message
+                let account_str = account.unwrap_or("*").to_string();
+                let account_msg = Message::with_prefix(
+                    rustircd_core::Prefix::User {
+                        nick: user.nick.clone(),
+                        user: user.username().to_string(),
+                        host: user.hostname().to_string(),
+                    },
+                    MessageType::Custom("ACCOUNT".to_string()),
+                    vec![account_str],
+                );
+                
+                // Send to all channel members
+                for member_nick in members {
+                    if member_nick != user.nick {
+                        let _ = context.send_to_user(&member_nick, account_msg.clone()).await;
+                    }
+                }
+            }
+            
+            tracing::info!("Broadcasted account change for user {} to channel members", user_id);
+        }
+        
+        Ok(())
+    }
+    
+    /// Set user account with database update and broadcasting
+    pub async fn set_user_account_with_broadcast(&mut self, user_id: Uuid, account: String, context: &ModuleContext) -> Result<()> {
+        // Set in local tracking
+        self.set_user_account(user_id, account.clone())?;
+        
+        // Broadcast the change
+        self.broadcast_account_change(user_id, Some(&account), context).await?;
+        
+        Ok(())
+    }
+    
+    /// Remove user account with broadcasting
+    pub async fn remove_user_account_with_broadcast(&mut self, user_id: Uuid, context: &ModuleContext) -> Result<Option<String>> {
+        let account = self.remove_user_account(user_id);
+        
+        if account.is_some() {
+            // Broadcast account removal (*)
+            self.broadcast_account_change(user_id, None, context).await?;
+        }
+        
+        Ok(account)
     }
 }

@@ -1,6 +1,6 @@
 //! IRCv3 Changing User Properties
 
-use rustircd_core::{Error, Result};
+use rustircd_core::{Error, Result, Message, MessageType, Prefix, module::ModuleContext};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -225,6 +225,87 @@ impl UserProperties {
             total_changes,
             property_counts,
         }
+    }
+    
+    /// Set user property and broadcast the change to channel members
+    pub async fn set_property_with_broadcast(
+        &mut self,
+        user_id: Uuid,
+        property: String,
+        value: Option<String>,
+        reason: Option<String>,
+        context: &ModuleContext,
+    ) -> Result<()> {
+        // Set the property locally
+        self.set_property(user_id, property.clone(), value.clone(), reason)?;
+        
+        // Broadcast the change to channel members
+        if let Some(user) = context.database.get_user(&user_id) {
+            // Get all channels the user is in
+            let channels = context.database.get_user_channels(&user.nick);
+            
+            for channel in channels {
+                // Get all members of the channel
+                let members = context.get_channel_users(&channel);
+                
+                // Create CHGHOST or custom property change message
+                // For hostname changes, use CHGHOST
+                if property == "hostname" {
+                    if let Some(ref new_host) = value {
+                        let chghost_msg = Message::with_prefix(
+                            Prefix::User {
+                                nick: user.nick.clone(),
+                                user: user.username().to_string(),
+                                host: user.hostname().to_string(),
+                            },
+                            MessageType::Custom("CHGHOST".to_string()),
+                            vec![user.username().to_string(), new_host.clone()],
+                        );
+                        
+                        // Send to all channel members
+                        for member_nick in &members {
+                            if member_nick != &user.nick {
+                                let _ = context.send_to_user(member_nick, chghost_msg.clone()).await;
+                            }
+                        }
+                    }
+                }
+                // For other properties, could send custom messages or METADATA commands
+                // This is extension-specific and would depend on what capabilities are negotiated
+            }
+            
+            tracing::info!("Broadcasted property change for user {}: {} = {:?}", user_id, property, value);
+        }
+        
+        Ok(())
+    }
+    
+    /// Remove user property and broadcast the change
+    pub async fn remove_property_with_broadcast(
+        &mut self,
+        user_id: Uuid,
+        property: &str,
+        context: &ModuleContext,
+    ) -> Result<Option<String>> {
+        let old_value = self.remove_property(&user_id, property)?;
+        
+        if old_value.is_some() {
+            // Broadcast the change (similar to set_property_with_broadcast)
+            if let Some(user) = context.database.get_user(&user_id) {
+                let channels = context.database.get_user_channels(&user.nick);
+                
+                for channel in channels {
+                    let members = context.get_channel_users(&channel);
+                    
+                    // Send property removal notification
+                    // Implementation depends on which property and what capabilities are enabled
+                    
+                    tracing::debug!("Would notify {} channel members about property removal", members.len());
+                }
+            }
+        }
+        
+        Ok(old_value)
     }
 }
 

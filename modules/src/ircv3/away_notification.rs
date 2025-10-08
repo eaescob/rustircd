@@ -1,6 +1,6 @@
 //! IRCv3 Away Notification
 
-use rustircd_core::{User, Result};
+use rustircd_core::{User, Result, Message, MessageType, Prefix, module::ModuleContext};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -84,40 +84,66 @@ impl AwayNotification {
         }
     }
     
-    /// Implement away status change notifications
-    /// TODO: Integrate with channel membership system for targeted notifications
-    pub async fn notify_away_change(&self, user_id: Uuid, is_away: bool, message: Option<&str>) -> Result<()> {
-        // Implement away notification system
-        // In production, this would:
-        // 1. Get all users in channels with the user who changed away status
-        // 2. Send AWAY_NOTIFY message to users who have the away-notify capability
-        // 3. Include user ID, away status, and optional away message
-        
-        if is_away {
-            tracing::info!("User {} is now away: {:?}", user_id, message);
+    /// Broadcast away status change to channel members with away-notify capability
+    pub async fn notify_away_change(&self, user_id: Uuid, is_away: bool, message: Option<&str>, context: &ModuleContext) -> Result<()> {
+        // Get the user's information
+        if let Some(user) = context.database.get_user(&user_id) {
+            // Get all channels the user is in
+            let channels = context.database.get_user_channels(&user.nick);
             
-            // In production, would send:
-            // for target_user in channel_members_with_away_notify_capability {
-            //     let away_msg = Message::new(
-            //         MessageType::Custom("AWAY_NOTIFY".to_string()),
-            //         vec![user_id.to_string(), "1".to_string(), message.unwrap_or("").to_string()]
-            //     );
-            //     target_user.send(away_msg)?;
-            // }
-        } else {
-            tracing::info!("User {} is no longer away", user_id);
+            for channel in channels {
+                // Get all members of the channel
+                let members = context.get_channel_users(&channel);
+                
+                // Create AWAY message
+                let away_params = if is_away {
+                    vec![message.unwrap_or("").to_string()]
+                } else {
+                    vec![]
+                };
+                
+                let away_msg = Message::with_prefix(
+                    Prefix::User {
+                        nick: user.nick.clone(),
+                        user: user.username().to_string(),
+                        host: user.hostname().to_string(),
+                    },
+                    MessageType::Away,
+                    away_params,
+                );
+                
+                // Send to all channel members (they should check if they have away-notify enabled)
+                for member_nick in members {
+                    if member_nick != user.nick {
+                        let _ = context.send_to_user(&member_nick, away_msg.clone()).await;
+                    }
+                }
+            }
             
-            // In production, would send:
-            // for target_user in channel_members_with_away_notify_capability {
-            //     let away_msg = Message::new(
-            //         MessageType::Custom("AWAY_NOTIFY".to_string()),
-            //         vec![user_id.to_string(), "0".to_string(), "".to_string()]
-            //     );
-            //     target_user.send(away_msg)?;
-            // }
+            if is_away {
+                tracing::info!("User {} is now away: {:?}", user_id, message);
+            } else {
+                tracing::info!("User {} is no longer away", user_id);
+            }
         }
         
-        tracing::debug!("Would send away notifications for user {} to channel members", user_id);
         Ok(())
+    }
+    
+    /// Set user away status with broadcasting
+    pub async fn set_user_away_with_broadcast(&mut self, user_id: Uuid, away_message: Option<String>, context: &ModuleContext) -> Result<()> {
+        let is_away = away_message.is_some();
+        self.set_user_away(user_id, away_message.clone());
+        self.notify_away_change(user_id, is_away, away_message.as_deref(), context).await?;
+        Ok(())
+    }
+    
+    /// Remove user away status with broadcasting
+    pub async fn remove_user_away_with_broadcast(&mut self, user_id: Uuid, context: &ModuleContext) -> Result<Option<Option<String>>> {
+        let old_status = self.remove_user_away(&user_id);
+        if old_status.is_some() {
+            self.notify_away_change(user_id, false, None, context).await?;
+        }
+        Ok(old_status)
     }
 }

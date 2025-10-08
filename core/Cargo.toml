@@ -32,3 +32,10 @@ lazy_static = "1.4"
 
 [dev-dependencies]
 tokio-test = "0.4"
+criterion = { version = "0.5", features = ["async_tokio"] }
+rand = "0.8"
+tempfile = "3.8"
+
+[[bench]]
+name = "benchmarks"
+harness = false

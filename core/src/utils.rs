@@ -295,6 +295,7 @@ mod tests {
     
     #[test]
     fn test_private_ip() {
+        use std::net::{IpAddr, Ipv4Addr};
         assert!(network::is_private_ip(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
         assert!(network::is_private_ip(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
         assert!(network::is_private_ip(IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));

@@ -2,6 +2,7 @@
 
 use crate::{Error, Result};
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -37,6 +38,7 @@ pub struct DnsResolver {
     resolver: TokioAsyncResolver,
     enabled: bool,
     reverse_enabled: bool,
+    cache: Arc<crate::DnsCache>,
 }
 
 impl DnsResolver {
@@ -49,6 +51,7 @@ impl DnsResolver {
             resolver,
             enabled: enable_dns,
             reverse_enabled: enable_reverse_dns,
+            cache: Arc::new(crate::DnsCache::new(std::time::Duration::from_secs(300))),
         })
     }
 
@@ -63,6 +66,17 @@ impl DnsResolver {
             };
         }
 
+        // Check cache first
+        let ip_str = ip.to_string();
+        if let Some(cached_hostname) = self.cache.get_hostname(&ip_str) {
+            return LookupResult {
+                original_ip: ip,
+                hostname: Some(cached_hostname),
+                success: true,
+                error: None,
+            };
+        }
+
         let lookup_result = timeout(
             Duration::from_secs(5),
             self.resolver.reverse_lookup(ip),
@@ -73,6 +87,11 @@ impl DnsResolver {
                 // Get the first hostname from the result
                 let hostname = names.iter().next()
                     .map(|name| name.to_string());
+                
+                // Cache the result
+                if let Some(ref h) = hostname {
+                    self.cache.cache_hostname(ip_str, h.clone());
+                }
                 
                 LookupResult {
                     original_ip: ip,
@@ -107,6 +126,18 @@ impl DnsResolver {
             };
         }
 
+        // Check cache first
+        if let Some(cached_ip) = self.cache.get_ip(hostname) {
+            if let Ok(ip) = cached_ip.parse::<IpAddr>() {
+                return LookupResult {
+                    original_ip: ip,
+                    hostname: Some(hostname.to_string()),
+                    success: true,
+                    error: None,
+                };
+            }
+        }
+
         let lookup_result = timeout(
             Duration::from_secs(5),
             self.resolver.lookup_ip(hostname),
@@ -116,6 +147,9 @@ impl DnsResolver {
             Ok(Ok(ips)) => {
                 // Get the first IP from the result
                 if let Some(ip) = ips.iter().next() {
+                    // Cache the result
+                    self.cache.cache_hostname(ip.to_string(), hostname.to_string());
+                    
                     LookupResult {
                         original_ip: ip,
                         hostname: Some(hostname.to_string()),

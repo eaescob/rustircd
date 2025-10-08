@@ -29,6 +29,8 @@ pub mod rehash;
 pub mod buffer;
 pub mod class_tracker;
 pub mod validation;
+pub mod cache;
+pub mod batch_optimizer;
 
 #[cfg(test)]
 mod tests;
@@ -64,6 +66,8 @@ pub use rehash::RehashService;
 pub use buffer::{SendQueue, RecvQueue, ConnectionTiming};
 pub use class_tracker::{ClassTracker, ClassStats};
 pub use validation::{ConfigValidator, ValidationResult, ValidationError, ValidationWarning, ErrorCategory, print_validation_result};
+pub use cache::{LruCache, MessageCache, DnsCache, ChannelMemberCache, UserLookupCache, CacheStats};
+pub use batch_optimizer::{BatchOptimizer, BatchConfig, MessageBatch, BatchStats, ConnectionPool, ConnectionPoolStats};
 
 /// Re-exports for convenience
 pub use async_trait::async_trait;

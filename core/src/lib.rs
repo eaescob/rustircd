@@ -28,6 +28,7 @@ pub mod module_numerics;
 pub mod rehash;
 pub mod buffer;
 pub mod class_tracker;
+pub mod validation;
 
 #[cfg(test)]
 mod tests;
@@ -62,6 +63,7 @@ pub use module_numerics::{ModuleNumericManager, ModuleNumeric, ModuleNumericClie
 pub use rehash::RehashService;
 pub use buffer::{SendQueue, RecvQueue, ConnectionTiming};
 pub use class_tracker::{ClassTracker, ClassStats};
+pub use validation::{ConfigValidator, ValidationResult, ValidationError, ValidationWarning, ErrorCategory, print_validation_result};
 
 /// Re-exports for convenience
 pub use async_trait::async_trait;

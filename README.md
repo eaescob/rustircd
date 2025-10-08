@@ -693,6 +693,109 @@ The connection class system consists of five core components:
 
 All limits are enforced automatically when connections are accepted and during normal operation.
 
+## ✅ Configuration Validation
+
+RustIRCD includes a comprehensive configuration validation system that prevents common mistakes and provides helpful suggestions.
+
+### Validation Tool
+
+Validate your configuration before starting the server:
+
+```bash
+# Validate default config.toml
+cargo run --example validate_config
+
+# Validate specific configuration file
+cargo run --example validate_config -- /path/to/config.toml
+
+# Get help
+cargo run --example validate_config -- --help
+```
+
+### What Gets Validated
+
+#### Errors (Must Fix)
+- **Missing Required Fields**: server.name, network.name, connection.ports
+- **Invalid Values**: Empty names, zero limits, invalid IP addresses
+- **Invalid References**: Non-existent classes in server links or allow blocks
+- **File Not Found**: Missing TLS certificates, MOTD files
+- **Duplicates**: Duplicate class names, port numbers, server names
+- **Security Issues**: Empty passwords, invalid password hashes
+- **Configuration Ordering**: Classes must be defined before being referenced
+
+#### Warnings (Should Review)
+- **Security Best Practices**: Overly permissive hostmasks, disabled throttling
+- **Missing Recommended Settings**: No channel module, no TLS on client ports
+- **Suboptimal Values**: Very small buffer sizes, very frequent pings
+- **Deprecated Settings**: Using allowed_hosts instead of allow_blocks
+
+#### Information (FYI)
+- Number of classes, links, operators configured
+- Which classes are referenced and their settings
+- Module and security configuration summary
+
+### Example Output
+
+```
+================================================================================
+Configuration Validation Report
+================================================================================
+
+✓ Configuration is VALID
+
+WARNINGS (3):
+--------------------------------------------------------------------------------
+1. network.operators[0] - Operator 'admin' allows connections from any host
+   → Suggestion: Consider restricting with a specific hostmask pattern
+
+2. security - All hosts are allowed without class-based restrictions
+   → Suggestion: Consider using allow_blocks for better control
+
+3. modules.throttling - Connection throttling is disabled
+   → Suggestion: Enable throttling to protect against connection floods
+
+INFORMATION:
+--------------------------------------------------------------------------------
+  • Server: rustircd.local (max 1000 clients)
+  • Classes: 2 defined (default, server)
+  • Network: RustNet (2 links, 1 operators)
+  • Server link 'hub.example.com' → class 'server' (sendq: 10MB)
+  • Server link 'leaf.example.com' → class 'server' (sendq: 10MB)
+
+================================================================================
+✓ Configuration is valid but has 3 warning(s) to review.
+================================================================================
+```
+
+### Automatic Validation
+
+The server automatically validates configuration on startup:
+
+```rust
+// Validation runs in Server::init()
+let mut server = Server::new(config).await;
+server.init().await?; // Validates config and logs warnings
+```
+
+Validation errors prevent server startup, warnings are logged for review.
+
+### Integration in CI/CD
+
+Use the validation tool in your CI/CD pipeline:
+
+```bash
+# In your CI script
+cargo run --example validate_config -- config.toml
+if [ $? -ne 0 ]; then
+    echo "Configuration validation failed!"
+    exit 1
+fi
+```
+
+Exit codes:
+- `0` = Valid (may have warnings)
+- `1` = Has errors or failed to load
+
 ## 🔌 Modules
 
 RustIRCD includes 20+ production-ready modules:

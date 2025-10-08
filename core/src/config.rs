@@ -838,8 +838,30 @@ impl Config {
         Ok(())
     }
     
-    /// Validate configuration
+    /// Validate configuration (comprehensive validation with warnings)
     pub fn validate(&self) -> Result<()> {
+        // Run comprehensive validation
+        let validator = crate::validation::ConfigValidator::new(self.clone());
+        let validation_result = validator.validate();
+
+        // Log warnings
+        for warning in &validation_result.warnings {
+            tracing::warn!("[{}] {}", warning.section, warning.message);
+            if let Some(suggestion) = &warning.suggestion {
+                tracing::info!("  Suggestion: {}", suggestion);
+            }
+        }
+
+        // Return error if validation failed
+        if !validation_result.is_valid {
+            let error_messages: Vec<String> = validation_result.errors
+                .iter()
+                .map(|e| format!("{}: {}", e.section, e.message))
+                .collect();
+            return Err(Error::Config(format!("Configuration validation failed:\n  {}", error_messages.join("\n  "))));
+        }
+
+        // Continue with existing basic validation for backwards compatibility
         // Validate server name
         if self.server.name.is_empty() {
             return Err(Error::Config("Server name cannot be empty".to_string()));

@@ -257,7 +257,8 @@
 #### Miscellaneous Commands Status:
 - **✅ Implemented (22/22)**: PING, PONG, QUIT, ERROR, AWAY, ISON, USERHOST, ADMIN, VERSION, STATS, LINKS, TIME, INFO, TRACE, WHO, WHOIS, WHOWAS, OPER, CONNECT, MOTD, KILL, WALLOPS, USERS, REHASH
 - **🚧 Partial (1/22)**: MODE (channel ✅, user ✅), SQUIT (defined)
-- **❌ Missing (2/22)**: SERVICE, SERVLIST, SQUERY
+- **❌ Obsolete (Not Implemented - RFC 2812 commands not used by modern IRCds)**: SERVICE, SERVLIST, SQUERY
+  - *Note: Modern IRC uses external services packages (like Atheme) instead of these obsolete commands. RustIRCd implements the modern services architecture via the Atheme protocol integration.*
 
 ### Enhanced STATS System (100%)
 - [x] **RFC 1459 Compliance**: Complete implementation of all standard STATS query types
@@ -496,11 +497,13 @@
 - [x] **USERS** - User count and statistics ✅
 - [x] **SASL IRCv3 Integration** - Integrate SASL module into IRCv3 capability negotiation system ✅
 
-#### Low Priority (Advanced Features)
-- [ ] **SERVICE** - Service registration framework
-- [ ] **SERVLIST** - Service list and management
-- [ ] **SQUERY** - Service query system
-- [ ] **SUMMON** - User summoning (deprecated in modern IRC)
+#### Obsolete Commands (Not Implemented - Modern IRC Uses Different Architecture)
+- **SERVICE** - Obsolete service registration (modern IRC uses external services like Atheme)
+- **SERVLIST** - Obsolete service listing (replaced by services protocol)
+- **SQUERY** - Obsolete service query (use PRIVMSG to services instead)
+- **SUMMON** - User summoning (deprecated in modern IRC)
+
+*Note: RustIRCd implements modern services architecture through Atheme protocol integration instead of these obsolete RFC 2812 commands.*
 
 ### Infrastructure Improvements (TODO)
 - [x] **Server-to-Server Broadcasting** - Complete implementation of server broadcasting for all critical commands ✅
@@ -537,7 +540,6 @@
 3. Comprehensive test suite
 4. Documentation improvements
 5. Example service implementations (NickServ, ChanServ)
-6. Implement low-priority miscellaneous commands (SERVICE, SERVLIST, SQUERY)
 
 ### Long Term (Month 4+)
 1. Advanced IRCv3 capabilities

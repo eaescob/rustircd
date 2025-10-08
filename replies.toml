@@ -592,16 +592,6 @@ code = 221
 text = "{user_modes}"
 description = "RPL_UMODEIS - User mode is"
 
-[replies.234]
-code = 234
-text = "{name} {server} {mask} {type} {hopcount} {info}"
-description = "RPL_SERVLIST - Service list"
-
-[replies.235]
-code = 235
-text = "{mask} {type} :End of service listing"
-description = "RPL_SERVLISTEND - End of service list"
-
 [replies.392]
 code = 392
 text = ":UserID Terminal Host"

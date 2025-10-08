@@ -970,18 +970,6 @@ impl RepliesConfig {
             description: Some("RPL_UMODEIS - User mode is".to_string()),
         });
         
-        replies.insert(234, ReplyConfig {
-            code: 234,
-            text: "{name} {server} {mask} {type} {hopcount} {info}".to_string(),
-            description: Some("RPL_SERVLIST - Service list".to_string()),
-        });
-        
-        replies.insert(235, ReplyConfig {
-            code: 235,
-            text: "{mask} {type} :End of service listing".to_string(),
-            description: Some("RPL_SERVLISTEND - End of service list".to_string()),
-        });
-        
         replies.insert(392, ReplyConfig {
             code: 392,
             text: ":UserID Terminal Host".to_string(),

@@ -1,6 +1,6 @@
 //! Client connection management
 
-use crate::{Message, User, Error, NumericReply, Result};
+use crate::{Message, User, Error, NumericReply, Result, SendQueue, RecvQueue, ConnectionTiming};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -53,10 +53,18 @@ pub struct Client {
     pub supports_ircv3: bool,
     /// Type of connection (client or server)
     pub connection_type: ConnectionType,
+    /// Connection class name
+    pub class_name: String,
+    /// Send queue with buffer limits
+    pub sendq: SendQueue,
+    /// Receive queue with buffer limits
+    pub recvq: RecvQueue,
+    /// Connection timing information
+    pub timing: ConnectionTiming,
 }
 
 impl Client {
-    /// Create a new client
+    /// Create a new client with default class parameters
     pub fn new(
         id: Uuid,
         remote_addr: String,
@@ -66,13 +74,41 @@ impl Client {
         Self::new_with_type(id, remote_addr, local_addr, sender, ConnectionType::Client)
     }
     
-    /// Create a new client with specific connection type
+    /// Create a new client with specific connection type and default class
     pub fn new_with_type(
         id: Uuid,
         remote_addr: String,
         local_addr: String,
         sender: mpsc::UnboundedSender<Message>,
         connection_type: ConnectionType,
+    ) -> Self {
+        // Default buffer sizes and timing parameters
+        Self::new_with_class(
+            id,
+            remote_addr,
+            local_addr,
+            sender,
+            connection_type,
+            "default".to_string(),
+            1048576,  // 1MB sendq
+            8192,     // 8KB recvq
+            120,      // 2 minute ping frequency
+            300,      // 5 minute timeout
+        )
+    }
+    
+    /// Create a new client with specific connection class parameters
+    pub fn new_with_class(
+        id: Uuid,
+        remote_addr: String,
+        local_addr: String,
+        sender: mpsc::UnboundedSender<Message>,
+        connection_type: ConnectionType,
+        class_name: String,
+        max_sendq: usize,
+        max_recvq: usize,
+        ping_frequency: u64,
+        connection_timeout: u64,
     ) -> Self {
         Self {
             id,
@@ -85,6 +121,10 @@ impl Client {
             capabilities: std::collections::HashSet::new(),
             supports_ircv3: false,
             connection_type,
+            class_name,
+            sendq: SendQueue::new(max_sendq),
+            recvq: RecvQueue::new(max_recvq),
+            timing: ConnectionTiming::new(ping_frequency, connection_timeout),
         }
     }
     
@@ -204,5 +244,78 @@ impl Client {
         } else {
             format!("unknown@{}", self.remote_addr)
         }
+    }
+    
+    /// Update connection class parameters (useful for rehash/config changes)
+    pub fn update_class_parameters(
+        &mut self,
+        class_name: String,
+        max_sendq: usize,
+        max_recvq: usize,
+        ping_frequency: u64,
+        connection_timeout: u64,
+    ) {
+        self.class_name = class_name;
+        self.sendq.set_max_size(max_sendq);
+        self.recvq.set_max_size(max_recvq);
+        self.timing.update_parameters(ping_frequency, connection_timeout);
+    }
+    
+    /// Check if connection has timed out
+    pub fn is_timed_out(&self) -> bool {
+        self.timing.is_timed_out()
+    }
+    
+    /// Check if it's time to send a PING
+    pub fn should_send_ping(&self) -> bool {
+        self.timing.should_send_ping()
+    }
+    
+    /// Record that we sent a PING
+    pub fn record_ping_sent(&mut self) {
+        self.timing.record_ping_sent();
+    }
+    
+    /// Record that we received a PONG
+    pub fn record_pong_received(&mut self) {
+        self.timing.record_pong_received();
+    }
+    
+    /// Update last activity timestamp
+    pub fn update_activity(&mut self) {
+        self.timing.update_activity();
+    }
+    
+    /// Check if sendq is near capacity
+    pub fn is_sendq_near_capacity(&self) -> bool {
+        self.sendq.is_near_capacity()
+    }
+    
+    /// Check if recvq is near capacity
+    pub fn is_recvq_near_capacity(&self) -> bool {
+        self.recvq.is_near_capacity()
+    }
+    
+    /// Get sendq statistics
+    pub fn sendq_stats(&self) -> (usize, usize, u64) {
+        (
+            self.sendq.current_size(),
+            self.sendq.max_size(),
+            self.sendq.dropped_messages(),
+        )
+    }
+    
+    /// Get recvq statistics
+    pub fn recvq_stats(&self) -> (usize, usize, u64) {
+        (
+            self.recvq.current_size(),
+            self.recvq.max_size(),
+            self.recvq.dropped_bytes(),
+        )
+    }
+    
+    /// Check if client is a server
+    pub fn is_server(&self) -> bool {
+        self.connection_type == ConnectionType::Server
     }
 }

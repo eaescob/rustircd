@@ -339,6 +339,360 @@ receiver_mode = "y"  # Custom mode character
 - **Channel**: `{channel}`, `{topic}`, `{reason}`, `{count}`, `{info}`
 - **Custom**: `{param0}`, `{param1}`, etc.
 
+## 🎯 Connection Classes (Solanum-Inspired)
+
+RustIRCD implements a comprehensive connection class system inspired by [Solanum IRCd](https://github.com/solanum-ircd/solanum), providing fine-grained control over connection resources, buffer limits, and timeouts.
+
+### What are Connection Classes?
+
+Connection classes group connections with similar parameters, allowing administrators to:
+- Assign different resource limits to different user groups (regular users, trusted users, operators, servers)
+- Prevent resource exhaustion by enforcing sendq/recvq buffer limits
+- Control connection timeouts and ping frequency per class
+- Disable throttling for trusted hosts
+- Limit connections per IP/host on a per-class basis
+
+### Configuration
+
+#### Defining Connection Classes
+
+```toml
+[[classes]]
+name = "default"
+description = "Default connection class for regular users"
+max_clients = 1000                  # Maximum number of clients in this class
+ping_frequency = 120                # Send PING every 120 seconds
+connection_timeout = 300            # Drop connection after 300 seconds of no response
+max_sendq = 1048576                 # 1MB send queue (outgoing data buffer)
+max_recvq = 8192                    # 8KB receive queue (incoming data buffer)
+disable_throttling = false          # Enable throttling for this class
+max_connections_per_ip = 5          # Maximum connections per IP for this class
+max_connections_per_host = 10       # Maximum connections per host for this class
+
+[[classes]]
+name = "trusted"
+description = "Trusted users with higher limits"
+max_clients = 100
+ping_frequency = 180                # Less frequent pings
+connection_timeout = 600            # Longer timeout
+max_sendq = 5242880                 # 5MB send queue
+max_recvq = 16384                   # 16KB receive queue
+disable_throttling = true           # No throttling for trusted users
+max_connections_per_ip = 20         # Allow more connections per IP
+
+[[classes]]
+name = "server"
+description = "Server-to-server connections"
+max_clients = 10                    # Maximum number of servers
+ping_frequency = 90                 # Frequent pings to detect server disconnects
+connection_timeout = 300
+max_sendq = 10485760                # 10MB send queue for burst traffic
+max_recvq = 32768                   # 32KB receive queue
+disable_throttling = true           # No throttling for server connections
+```
+
+### Limits Enforced
+
+| Limit | Description | Enforcement Location |
+|-------|-------------|---------------------|
+| **max_clients** | Maximum clients in this class | `ClassTracker::can_accept_connection()` |
+| **max_connections_per_ip** | Connections per IP address | `ClassTracker::can_accept_connection()` |
+| **max_connections_per_host** | Connections per hostname | `ClassTracker::can_accept_connection()` |
+| **max_sendq** | Outgoing buffer size (bytes) | `SendQueue::push()` - drops messages when full |
+| **max_recvq** | Incoming buffer size (bytes) | `RecvQueue::append()` - drops data when full |
+| **connection_timeout** | Idle timeout (seconds) | `ConnectionTiming::is_timed_out()` |
+| **ping_frequency** | PING interval (seconds) | `ConnectionTiming::should_send_ping()` |
+| **disable_throttling** | Bypass rate limiting | `ClassTracker::is_throttling_disabled()` |
+
+### Allow Blocks
+
+Allow blocks map hosts/IPs to connection classes using wildcard patterns and CIDR notation:
+
+```toml
+# Default allow block for all users
+[[security.allow_blocks]]
+hosts = ["*"]                       # All hostnames
+ips = ["*"]                         # All IPs
+class = "default"                   # Assign to default class
+description = "General users"
+
+# Trusted hosts with higher limits
+[[security.allow_blocks]]
+hosts = ["*.trusted.example.com", "operator.example.com"]
+ips = ["192.168.1.0/24", "10.0.0.100"]
+class = "trusted"                   # Assign to trusted class
+password = "secret123"              # Optional password requirement
+max_connections = 50                # Optional total limit for this block
+description = "Trusted users and operators"
+
+# Restricted hosts with lower limits
+[[security.allow_blocks]]
+hosts = ["*.restricted.example.com"]
+ips = ["203.0.113.0/24"]
+class = "restricted"
+description = "Restricted users with lower limits"
+```
+
+### Per-Port IP Binding
+
+Each port can bind to a different IP address, useful for multi-homed servers:
+
+```toml
+# Public client port on public IP
+[[connection.ports]]
+port = 6667
+connection_type = "Client"
+tls = false
+description = "Public client port"
+bind_address = "192.168.1.100"      # Bind to specific public IP
+
+# Private server-to-server port on private IP
+[[connection.ports]]
+port = 6668
+connection_type = "Server"
+tls = false
+description = "Private server port"
+bind_address = "10.0.0.50"          # Bind to private network IP
+
+# Use global bind_address if not specified
+[[connection.ports]]
+port = 6697
+connection_type = "Client"
+tls = true
+description = "Secure IRC port"
+# Omit bind_address to use global connection.bind_address
+```
+
+### Server Links with Classes
+
+Server connections can reference classes for sendq/recvq management:
+
+```toml
+links = [
+    {
+        name = "hub.example.com",
+        hostname = "hub.example.com",
+        port = 6668,
+        password = "linkpass123",
+        tls = false,
+        outgoing = true,
+        class = "server"            # Use server class with 10MB sendq
+    },
+]
+```
+
+### Buffer Management
+
+The sendq (send queue) and recvq (receive queue) are bounded buffers that prevent resource exhaustion:
+
+#### Send Queue (SendQ)
+- **Purpose**: Buffer outgoing messages before they're sent to the client
+- **Limit**: Defined by `max_sendq` in the connection class
+- **Behavior**: When full, new messages are dropped and counted
+- **Monitoring**: Track with `Client::sendq_stats()` → (current, max, dropped)
+
+#### Receive Queue (RecvQ)
+- **Purpose**: Buffer incoming data before parsing into IRC messages
+- **Limit**: Defined by `max_recvq` in the connection class
+- **Behavior**: When full, new data is dropped and counted
+- **Monitoring**: Track with `Client::recvq_stats()` → (current, max, dropped)
+
+### Connection Timing
+
+Each connection tracks timing information for health monitoring:
+
+```rust
+// Check if it's time to send a PING
+if client.should_send_ping() {
+    send_ping(&client);
+    client.record_ping_sent();
+}
+
+// Check for connection timeout
+if client.is_timed_out() {
+    disconnect_client(&client, "Connection timeout");
+}
+
+// Update activity on received messages
+client.update_activity();
+
+// Record PONG response
+client.record_pong_received();
+```
+
+### Class Assignment Logic
+
+1. **If allow blocks are defined**: Use the first matching allow block's class
+2. **If no allow blocks defined**: Use `allowed_hosts` with default class
+3. **If no match**: Deny connection
+
+### Monitoring & Statistics
+
+Get statistics for monitoring and debugging:
+
+```rust
+// Get all class statistics
+for stats in class_tracker.get_all_stats() {
+    println!("Class: {}", stats.class_name);
+    println!("  Clients: {}", stats.total_clients);
+    println!("  Unique IPs: {}", stats.unique_ips);
+    println!("  Unique Hosts: {}", stats.unique_hosts);
+}
+
+// Get buffer statistics for a client
+let (current, max, dropped) = client.sendq_stats();
+println!("SendQ: {}/{} bytes, {} messages dropped", current, max, dropped);
+
+let (current, max, dropped) = client.recvq_stats();
+println!("RecvQ: {}/{} bytes, {} bytes dropped", current, max, dropped);
+
+// Get connection health metrics
+println!("Connection age: {:?}", client.timing.connection_age());
+println!("Time since activity: {:?}", client.timing.time_since_activity());
+println!("Unanswered PINGs: {}", client.timing.unanswered_pings);
+```
+
+#### STATS L - Server Link Statistics
+
+The `STATS L` command now shows detailed server link information including sendq/recvq statistics:
+
+```irc
+/STATS L
+
+# Example output for operators:
+:server.name 211 yournick hub.example.com SendQ:1024/10485760(0%) RecvQ:512/32768(1%) Msgs:1543s/1892r Bytes:245678s/389012r Time:3600s Dropped:0
+:server.name 211 yournick leaf.example.com SendQ:0/10485760(0%) RecvQ:0/32768(0%) Msgs:892s/1024r Bytes:145234s/198765r Time:7200s Dropped:2
+
+# Information shown:
+# - Server name
+# - SendQ: current/max (usage%)
+# - RecvQ: current/max (usage%)
+# - Messages: sent(s)/received(r)
+# - Bytes: sent(s)/received(r)
+# - Time: seconds online
+# - Dropped: number of messages dropped due to sendq full
+```
+
+**Features:**
+- Real-time sendq/recvq buffer usage and capacity
+- Message and byte counters for both directions
+- Connection uptime tracking
+- Dropped message counts for monitoring buffer overflows
+- Security: Non-operators see limited information (server names hidden)
+
+#### STATS M - Command Usage Statistics
+
+The `STATS M` command now shows detailed command usage including bytes and local/remote tracking:
+
+```irc
+/STATS M
+
+# Example output:
+:server.name 212 yournick PRIVMSG 150 89 50
+:server.name 212 yournick PING 100 20 50
+:server.name 212 yournick JOIN 75 49 15
+:server.name 212 yournick PART 60 54 10
+:server.name 212 yournick WHOIS 50 39 10
+:server.name 219 yournick m :End of STATS report
+
+# Format: <command> <total_count> <avg_bytes> <remote_count>
+# 
+# Information shown:
+# - Command name
+# - Total count (local + remote executions)
+# - Average bytes per command invocation
+# - Remote count (commands received from other servers)
+```
+
+**Features:**
+- Per-command execution counts (local vs remote)
+- Average message size tracking per command
+- Identifies which commands consume most bandwidth
+- Shows server-to-server propagation patterns
+
+**Interpreting Results:**
+- High `remote_count` = command is propagated across network (QUIT, NICK, etc.)
+- High `avg_bytes` = command uses significant bandwidth (PRIVMSG, TOPIC, etc.)
+- High total with high bytes = potential optimization target
+
+### Example Scenarios
+
+#### Scenario 1: High-Volume IRC Network
+
+```toml
+# Regular users - conservative limits
+[[classes]]
+name = "default"
+max_clients = 5000
+max_sendq = 524288       # 512KB
+max_recvq = 4096         # 4KB
+ping_frequency = 90
+connection_timeout = 180
+max_connections_per_ip = 3
+
+# IRC operators - elevated limits
+[[classes]]
+name = "opers"
+max_clients = 100
+max_sendq = 2097152      # 2MB
+max_recvq = 16384        # 16KB
+ping_frequency = 120
+connection_timeout = 600
+max_connections_per_ip = 10
+disable_throttling = true
+
+# Bots - special limits
+[[classes]]
+name = "bots"
+max_clients = 50
+max_sendq = 1048576      # 1MB
+max_recvq = 8192         # 8KB
+ping_frequency = 180
+connection_timeout = 600
+disable_throttling = true
+```
+
+#### Scenario 2: Multi-Homed Server
+
+```toml
+# Public interface for users
+[[connection.ports]]
+port = 6667
+connection_type = "Client"
+bind_address = "203.0.113.10"  # Public IP
+
+# Private interface for servers
+[[connection.ports]]
+port = 6668
+connection_type = "Server"
+bind_address = "10.0.0.5"      # Private IP
+
+# Management interface
+[[connection.ports]]
+port = 6669
+connection_type = "Client"
+bind_address = "127.0.0.1"     # Localhost only
+```
+
+### Backward Compatibility
+
+- **No classes defined?** A default class is created automatically
+- **No allow blocks defined?** All hosts in `allowed_hosts` use the default class
+- **No per-port binding?** Global `bind_address` is used
+- **Server links without class?** Default parameters are used
+
+### Implementation Architecture
+
+The connection class system consists of five core components:
+
+1. **ConnectionClass** (`core/src/config.rs`): Configuration structure
+2. **AllowBlock** (`core/src/config.rs`): Host-to-class mapping
+3. **SendQueue & RecvQueue** (`core/src/buffer.rs`): Bounded buffers
+4. **ConnectionTiming** (`core/src/buffer.rs`): Timing and health tracking
+5. **ClassTracker** (`core/src/class_tracker.rs`): Limit enforcement
+
+All limits are enforced automatically when connections are accepted and during normal operation.
+
 ## 🔌 Modules
 
 RustIRCD includes 20+ production-ready modules:

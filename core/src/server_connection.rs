@@ -92,6 +92,18 @@ pub struct ServerConnectionStats {
     pub connected_at: DateTime<Utc>,
     /// Last activity time
     pub last_activity: DateTime<Utc>,
+    /// Current sendq size in bytes
+    pub sendq_current: usize,
+    /// Maximum sendq size in bytes
+    pub sendq_max: usize,
+    /// Number of dropped messages due to sendq full
+    pub sendq_dropped: u64,
+    /// Current recvq size in bytes
+    pub recvq_current: usize,
+    /// Maximum recvq size in bytes
+    pub recvq_max: usize,
+    /// Number of dropped bytes due to recvq full
+    pub recvq_dropped: u64,
 }
 
 impl Default for ServerConnectionStats {
@@ -104,6 +116,12 @@ impl Default for ServerConnectionStats {
             messages_sent: 0,
             connected_at: now,
             last_activity: now,
+            sendq_current: 0,
+            sendq_max: 10485760, // 10MB default for servers
+            sendq_dropped: 0,
+            recvq_current: 0,
+            recvq_max: 32768, // 32KB default for servers
+            recvq_dropped: 0,
         }
     }
 }
@@ -184,6 +202,32 @@ impl ServerConnection {
         self.stats.bytes_received += bytes_received;
         self.stats.bytes_sent += bytes_sent;
         self.stats.last_activity = Utc::now();
+    }
+
+    /// Update sendq statistics
+    pub fn update_sendq_stats(&mut self, current: usize, dropped: u64) {
+        self.stats.sendq_current = current;
+        self.stats.sendq_dropped += dropped;
+    }
+
+    /// Update recvq statistics
+    pub fn update_recvq_stats(&mut self, current: usize, dropped: u64) {
+        self.stats.recvq_current = current;
+        self.stats.recvq_dropped += dropped;
+    }
+
+    /// Get sendq usage percentage
+    pub fn sendq_usage_percent(&self) -> f32 {
+        if self.stats.sendq_max == 0 {
+            return 0.0;
+        }
+        (self.stats.sendq_current as f32 / self.stats.sendq_max as f32) * 100.0
+    }
+
+    /// Get time online in seconds
+    pub fn time_online_seconds(&self) -> u64 {
+        let now = Utc::now();
+        (now - self.stats.connected_at).num_seconds() as u64
     }
 }
 

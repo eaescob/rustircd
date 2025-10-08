@@ -388,12 +388,12 @@ impl Server {
     
     /// Handle a message from a client
     pub async fn handle_message(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
-        // Record message statistics
+        // Record message statistics (from local client, is_remote = false)
         let command_name = match &message.command {
             MessageType::Custom(cmd) => cmd.as_str(),
             _ => "UNKNOWN",
         };
-        self.statistics_manager.record_message_received(command_name, message.to_string().len()).await;
+        self.statistics_manager.record_message_received(command_name, message.to_string().len(), false).await;
         
         let connection_handler = self.connection_handler.read().await;
         let client = connection_handler.get_client(&client_id)
@@ -423,6 +423,13 @@ impl Server {
     
     /// Handle a message from a server
     pub async fn handle_server_message(&self, server_name: &str, message: Message) -> Result<()> {
+        // Record message statistics (from remote server, is_remote = true)
+        let command_name = match &message.command {
+            MessageType::Custom(cmd) => cmd.as_str(),
+            _ => "UNKNOWN",
+        };
+        self.statistics_manager.record_message_received(command_name, message.to_string().len(), true).await;
+        
         // Validate that this server is authorized to connect
         // This should be called when a server first connects, not on every message
         // For now, we'll check if the server is in our configuration
@@ -1481,25 +1488,33 @@ impl Server {
             if connection.is_registered() {
                 let stats_msg = if is_operator && self.config.server.show_server_details_in_stats {
                     // Show detailed server information to operators (if configured)
-                    NumericReply::stats_link_info(
+                    NumericReply::stats_link_info_detailed(
                         &connection.info.name,
-                        0, // sendq - TODO: implement send queue tracking
-                        0, // sent_messages - TODO: implement message tracking
-                        0, // sent_bytes - TODO: implement byte tracking
-                        0, // received_messages - TODO: implement message tracking
-                        0, // received_bytes - TODO: implement byte tracking
-                        0, // time_online - TODO: implement connection time tracking
+                        connection.stats.sendq_current,
+                        connection.stats.sendq_max,
+                        connection.stats.sendq_dropped,
+                        connection.stats.recvq_current,
+                        connection.stats.recvq_max,
+                        connection.stats.messages_sent,
+                        connection.stats.bytes_sent,
+                        connection.stats.messages_received,
+                        connection.stats.bytes_received,
+                        connection.time_online_seconds(),
                     )
                 } else {
                     // Show limited information to non-operators or when configured to hide details
-                    NumericReply::stats_link_info(
+                    NumericReply::stats_link_info_detailed(
                         "***", // Hide server name for security
-                        0, // sendq
-                        0, // sent_messages
-                        0, // sent_bytes
-                        0, // received_messages
-                        0, // received_bytes
-                        0, // time_online
+                        connection.stats.sendq_current,
+                        connection.stats.sendq_max,
+                        0, // Hide dropped count
+                        connection.stats.recvq_current,
+                        connection.stats.recvq_max,
+                        0, // Hide message counts
+                        0, // Hide byte counts
+                        0, // Hide message counts
+                        0, // Hide byte counts
+                        connection.time_online_seconds(),
                     )
                 };
                 let _ = client.send(stats_msg);
@@ -1513,12 +1528,12 @@ impl Server {
     async fn handle_stats_commands(&self, client: &Client, stats: &crate::ServerStatistics) -> Result<()> {
         let top_commands = stats.get_top_commands(10); // Top 10 commands
         
-        for (command, count) in top_commands {
+        for (command, cmd_stats) in top_commands {
             let stats_msg = NumericReply::stats_commands(
                 &command,
-                count.try_into().unwrap_or(u32::MAX),
-                0, // bytes - TODO: implement byte tracking per command
-                0, // remote_count - TODO: implement remote tracking
+                cmd_stats.total_count().try_into().unwrap_or(u32::MAX),
+                (cmd_stats.total_bytes / cmd_stats.total_count().max(1)).try_into().unwrap_or(u32::MAX), // avg bytes per command
+                cmd_stats.remote_count.try_into().unwrap_or(u32::MAX),
             );
             let _ = client.send(stats_msg);
         }

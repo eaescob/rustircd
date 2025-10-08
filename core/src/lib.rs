@@ -26,6 +26,8 @@ pub mod motd;
 pub mod lookup;
 pub mod module_numerics;
 pub mod rehash;
+pub mod buffer;
+pub mod class_tracker;
 
 #[cfg(test)]
 mod tests;
@@ -53,11 +55,13 @@ pub use database::{Database, DatabaseConfig, UserHistoryEntry, ServerInfo as Dat
 pub use broadcast::{BroadcastSystem, BroadcastTarget, BroadcastMessage, BroadcastPriority, MessageBuilder};
 pub use network::{NetworkQueryManager, NetworkMessageHandler, NetworkQuery, NetworkResponse, NetworkMessage};
 pub use throttling_manager::ThrottlingManager;
-pub use statistics::{StatisticsManager, ServerStatistics};
+pub use statistics::{StatisticsManager, ServerStatistics, CommandStats};
 pub use motd::MotdManager;
 pub use lookup::{LookupService, DnsResolver, IdentClient, LookupResult, IdentResult};
 pub use module_numerics::{ModuleNumericManager, ModuleNumeric, ModuleNumericClient};
 pub use rehash::RehashService;
+pub use buffer::{SendQueue, RecvQueue, ConnectionTiming};
+pub use class_tracker::{ClassTracker, ClassStats};
 
 /// Re-exports for convenience
 pub use async_trait::async_trait;

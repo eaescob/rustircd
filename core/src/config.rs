@@ -14,6 +14,8 @@ pub struct Config {
     pub network: NetworkConfig,
     /// Connection settings
     pub connection: ConnectionConfig,
+    /// Connection classes - define parameters for groups of connections
+    pub classes: Vec<ConnectionClass>,
     /// Security settings
     pub security: SecurityConfig,
     /// Module settings
@@ -97,6 +99,8 @@ pub struct ServerLink {
     pub tls: bool,
     /// Whether this is an outgoing connection
     pub outgoing: bool,
+    /// Connection class for this server link
+    pub class: Option<String>,
 }
 
 /// Operator flags for different privileges
@@ -305,6 +309,8 @@ pub struct PortConfig {
     pub tls: bool,
     /// Optional description for this port
     pub description: Option<String>,
+    /// Optional bind address for this specific port (overrides global bind_address)
+    pub bind_address: Option<String>,
 }
 
 /// Types of connections allowed on a port
@@ -318,13 +324,74 @@ pub enum PortConnectionType {
     Both,
 }
 
+/// Connection class configuration - defines parameters for groups of connections
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionClass {
+    /// Class name (unique identifier)
+    pub name: String,
+    /// Maximum number of clients in this class
+    pub max_clients: Option<usize>,
+    /// Ping frequency in seconds (how often to send PING to check if connection is alive)
+    pub ping_frequency: Option<u64>,
+    /// Connection timeout in seconds (how long to wait before dropping unresponsive connection)
+    pub connection_timeout: Option<u64>,
+    /// Maximum sendq size in bytes (send queue - outgoing data buffer)
+    pub max_sendq: Option<usize>,
+    /// Maximum receive queue size in bytes (incoming data buffer)
+    pub max_recvq: Option<usize>,
+    /// Whether to disable throttling for this class
+    pub disable_throttling: bool,
+    /// Maximum connections per IP for this class (overrides global setting)
+    pub max_connections_per_ip: Option<usize>,
+    /// Maximum connections per host for this class (overrides global setting)
+    pub max_connections_per_host: Option<usize>,
+    /// Class description
+    pub description: Option<String>,
+}
+
+impl Default for ConnectionClass {
+    fn default() -> Self {
+        Self {
+            name: "default".to_string(),
+            max_clients: None,
+            ping_frequency: Some(120),
+            connection_timeout: Some(300),
+            max_sendq: Some(1048576), // 1MB
+            max_recvq: Some(8192),    // 8KB
+            disable_throttling: false,
+            max_connections_per_ip: None,
+            max_connections_per_host: None,
+            description: Some("Default connection class".to_string()),
+        }
+    }
+}
+
+/// Allow block - defines which hosts can connect and assigns them to a class
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AllowBlock {
+    /// Host patterns that are allowed (supports wildcards)
+    pub hosts: Vec<String>,
+    /// IP patterns that are allowed (supports CIDR notation)
+    pub ips: Vec<String>,
+    /// Connection class for this allow block
+    pub class: String,
+    /// Optional password required for connections in this allow block
+    pub password: Option<String>,
+    /// Maximum number of connections for this allow block
+    pub max_connections: Option<usize>,
+    /// Description of this allow block
+    pub description: Option<String>,
+}
+
 /// Security configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
-    /// Allowed client hosts
+    /// Allowed client hosts (deprecated - use allow_blocks instead)
     pub allowed_hosts: Vec<String>,
     /// Denied client hosts
     pub denied_hosts: Vec<String>,
+    /// Allow blocks - define which hosts can connect and assign them to classes
+    pub allow_blocks: Vec<AllowBlock>,
     /// Require password for clients
     pub require_client_password: bool,
     /// Client password
@@ -523,6 +590,7 @@ impl Default for Config {
             server: ServerConfig::default(),
             network: NetworkConfig::default(),
             connection: ConnectionConfig::default(),
+            classes: vec![ConnectionClass::default()], // Include a default class
             security: SecurityConfig::default(),
             modules: ModuleConfig::default(),
             database: DatabaseConfig::default(),
@@ -578,24 +646,28 @@ impl Default for ConnectionConfig {
                     connection_type: PortConnectionType::Client,
                     tls: false,
                     description: Some("Standard IRC port".to_string()),
+                    bind_address: None, // Use global bind_address
                 },
                 PortConfig {
                     port: 6668,
                     connection_type: PortConnectionType::Server,
                     tls: false,
                     description: Some("Server-to-server connections".to_string()),
+                    bind_address: None, // Use global bind_address
                 },
                 PortConfig {
                     port: 6697,
                     connection_type: PortConnectionType::Client,
                     tls: true,
                     description: Some("Secure IRC port".to_string()),
+                    bind_address: None, // Use global bind_address
                 },
                 PortConfig {
                     port: 6698,
                     connection_type: PortConnectionType::Server,
                     tls: true,
                     description: Some("Secure server-to-server connections".to_string()),
+                    bind_address: None, // Use global bind_address
                 },
             ],
             bind_address: "0.0.0.0".to_string(),
@@ -612,6 +684,7 @@ impl Default for SecurityConfig {
         Self {
             allowed_hosts: vec!["*".to_string()],
             denied_hosts: Vec::new(),
+            allow_blocks: Vec::new(), // Empty by default, will fall back to allowed_hosts
             require_client_password: false,
             client_password: None,
             enable_ident: true,
@@ -822,6 +895,15 @@ impl Config {
         
         // Validate server security configuration
         self.validate_server_security()?;
+        
+        // Validate classes
+        self.validate_classes()?;
+        
+        // Validate allow blocks
+        self.validate_allow_blocks()?;
+        
+        // Validate server link classes
+        self.validate_server_link_classes()?;
         
         Ok(())
     }
@@ -1051,5 +1133,197 @@ impl Config {
     /// Get all enabled services
     pub fn get_enabled_services(&self) -> Vec<&ServiceDefinition> {
         self.services.services.iter().filter(|service| service.enabled).collect()
+    }
+
+    /// Get connection class by name
+    pub fn get_class(&self, name: &str) -> Option<&ConnectionClass> {
+        self.classes.iter().find(|class| class.name == name)
+    }
+
+    /// Get the bind address for a specific port
+    pub fn get_bind_address_for_port(&self, port_config: &PortConfig) -> String {
+        port_config.bind_address.as_ref()
+            .unwrap_or(&self.connection.bind_address)
+            .clone()
+    }
+
+    /// Find allow block that matches a host or IP
+    pub fn find_allow_block(&self, host: &str, ip: &str) -> Option<&AllowBlock> {
+        for allow_block in &self.security.allow_blocks {
+            // Check if host matches any pattern in the allow block
+            for pattern in &allow_block.hosts {
+                if self.matches_host_pattern(host, pattern) {
+                    return Some(allow_block);
+                }
+            }
+            
+            // Check if IP matches any pattern in the allow block
+            for pattern in &allow_block.ips {
+                if self.matches_ip_pattern(ip, pattern) {
+                    return Some(allow_block);
+                }
+            }
+        }
+        
+        None
+    }
+
+    /// Check if a host matches a pattern (simple wildcard matching)
+    pub fn matches_host_pattern(&self, host: &str, pattern: &str) -> bool {
+        if pattern == "*" {
+            return true;
+        }
+        
+        if pattern.contains('*') {
+            // Simple wildcard matching
+            let parts: Vec<&str> = pattern.split('*').collect();
+            if parts.len() == 2 {
+                if parts[0].is_empty() {
+                    return host.ends_with(parts[1]);
+                } else if parts[1].is_empty() {
+                    return host.starts_with(parts[0]);
+                } else {
+                    return host.starts_with(parts[0]) && host.ends_with(parts[1]);
+                }
+            }
+        }
+        
+        host == pattern
+    }
+
+    /// Check if an IP matches a pattern (supports CIDR notation)
+    fn matches_ip_pattern(&self, ip: &str, pattern: &str) -> bool {
+        if pattern == "*" {
+            return true;
+        }
+        
+        // For now, simple exact match - could be enhanced with CIDR support
+        if pattern.contains('/') {
+            // CIDR notation - simplified check for now
+            // In production, you'd want to use a proper CIDR library
+            let parts: Vec<&str> = pattern.split('/').collect();
+            if parts.len() == 2 {
+                let network = parts[0];
+                // Simple prefix matching for now
+                return ip.starts_with(network);
+            }
+        }
+        
+        ip == pattern || self.matches_host_pattern(ip, pattern)
+    }
+
+    /// Validate classes configuration
+    fn validate_classes(&self) -> Result<()> {
+        let mut seen_names = std::collections::HashSet::new();
+        
+        for class in &self.classes {
+            // Check for duplicate class names
+            if seen_names.contains(&class.name) {
+                return Err(Error::Config(format!("Duplicate class name: {}", class.name)));
+            }
+            seen_names.insert(class.name.clone());
+            
+            // Validate class configuration
+            if class.name.is_empty() {
+                return Err(Error::Config("Class name cannot be empty".to_string()));
+            }
+            
+            // Validate sendq and recvq sizes
+            if let Some(sendq) = class.max_sendq {
+                if sendq == 0 {
+                    return Err(Error::Config(format!("Class {} max_sendq cannot be 0", class.name)));
+                }
+            }
+            
+            if let Some(recvq) = class.max_recvq {
+                if recvq == 0 {
+                    return Err(Error::Config(format!("Class {} max_recvq cannot be 0", class.name)));
+                }
+            }
+            
+            // Validate timeouts
+            if let Some(ping_freq) = class.ping_frequency {
+                if ping_freq == 0 {
+                    return Err(Error::Config(format!("Class {} ping_frequency cannot be 0", class.name)));
+                }
+            }
+            
+            if let Some(timeout) = class.connection_timeout {
+                if timeout == 0 {
+                    return Err(Error::Config(format!("Class {} connection_timeout cannot be 0", class.name)));
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Validate allow blocks configuration
+    fn validate_allow_blocks(&self) -> Result<()> {
+        for (idx, allow_block) in self.security.allow_blocks.iter().enumerate() {
+            // Validate that the referenced class exists
+            if !self.classes.iter().any(|c| c.name == allow_block.class) {
+                return Err(Error::Config(format!(
+                    "Allow block {} references non-existent class: {}",
+                    idx, allow_block.class
+                )));
+            }
+            
+            // Validate that at least one host or IP pattern is specified
+            if allow_block.hosts.is_empty() && allow_block.ips.is_empty() {
+                return Err(Error::Config(format!(
+                    "Allow block {} must have at least one host or IP pattern",
+                    idx
+                )));
+            }
+            
+            // Validate host patterns
+            for host in &allow_block.hosts {
+                if !self.is_valid_host_pattern(host) {
+                    return Err(Error::Config(format!(
+                        "Invalid host pattern in allow block {}: {}",
+                        idx, host
+                    )));
+                }
+            }
+            
+            // Validate IP patterns
+            for ip in &allow_block.ips {
+                if !self.is_valid_ip_pattern(ip) {
+                    return Err(Error::Config(format!(
+                        "Invalid IP pattern in allow block {}: {}",
+                        idx, ip
+                    )));
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Validate IP pattern (basic check)
+    fn is_valid_ip_pattern(&self, pattern: &str) -> bool {
+        if pattern == "*" {
+            return true;
+        }
+        
+        // Basic validation - allow wildcards, dots, numbers, and CIDR notation
+        pattern.chars().all(|c| c.is_numeric() || c == '.' || c == '*' || c == '/' || c == ':')
+    }
+
+    /// Validate server links reference valid classes
+    fn validate_server_link_classes(&self) -> Result<()> {
+        for link in &self.network.links {
+            if let Some(class_name) = &link.class {
+                if !self.classes.iter().any(|c| &c.name == class_name) {
+                    return Err(Error::Config(format!(
+                        "Server link {} references non-existent class: {}",
+                        link.name, class_name
+                    )));
+                }
+            }
+        }
+        
+        Ok(())
     }
 }

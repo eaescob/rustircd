@@ -73,6 +73,7 @@ description = "Example IRC Network"
 
 # Optional: Server-to-server links for IRC network federation
 # Leave empty ([]) for a standalone server
+# Server links can reference connection classes for sendq/recvq management
 links = [
     # Example server link (commented out):
     # { 
@@ -81,7 +82,19 @@ links = [
     #   port = 6668,                        # Remote server port
     #   password = "linkpass123",           # Link password (must match on both sides)
     #   tls = false,                        # Use TLS for server connection
-    #   outgoing = true                     # true = we connect to them, false = they connect to us
+    #   outgoing = true,                    # true = we connect to them, false = they connect to us
+    #   class = "server"                    # Optional: Connection class for this server link
+    # },
+    # 
+    # Example server link with custom class for high-bandwidth hub:
+    # { 
+    #   name = "highbw-hub.example.com",
+    #   hostname = "highbw-hub.example.com",
+    #   port = 6668,
+    #   password = "hubpass456",
+    #   tls = true,
+    #   outgoing = true,
+    #   class = "server"                    # Use "server" class with 10MB sendq
     # },
 ]
 
@@ -118,7 +131,8 @@ super_servers = [
 # Network binding and connection limits.
 
 [connection]
-# REQUIRED: IP address to bind to (0.0.0.0 = all interfaces, 127.0.0.1 = localhost only)
+# REQUIRED: Default IP address to bind to (0.0.0.0 = all interfaces, 127.0.0.1 = localhost only)
+# Individual ports can override this with their own bind_address
 bind_address = "0.0.0.0"
 
 # Connection timeout in seconds (how long to wait for client to complete registration)
@@ -127,14 +141,15 @@ connection_timeout = 60
 # Ping timeout in seconds (how long before disconnecting idle clients)
 ping_timeout = 300
 
-# Maximum connections per IP address
+# Maximum connections per IP address (can be overridden by connection classes)
 max_connections_per_ip = 5
 
-# Maximum connections per hostname
+# Maximum connections per hostname (can be overridden by connection classes)
 max_connections_per_host = 10
 
 # REQUIRED: Port configuration (at least one client port needed)
 # You can define multiple ports for different purposes
+# Each port can optionally bind to a specific IP address
 
 # Standard client port (6667 is the traditional IRC port)
 [[connection.ports]]
@@ -142,6 +157,7 @@ port = 6667
 connection_type = "Client"    # "Client" or "Server"
 tls = false
 description = "Standard IRC port"
+# bind_address = "0.0.0.0"    # Optional: Override global bind_address for this port
 
 # Secure client port (6697 is the standard secure IRC port)
 [[connection.ports]]
@@ -149,6 +165,7 @@ port = 6697
 connection_type = "Client"
 tls = true
 description = "Secure IRC port (TLS)"
+# bind_address = "0.0.0.0"    # Optional: Override global bind_address for this port
 
 # Optional: Server-to-server port for linking
 # Uncomment if you want to allow server connections
@@ -157,6 +174,7 @@ description = "Secure IRC port (TLS)"
 # connection_type = "Server"
 # tls = false
 # description = "Server-to-server connections"
+# bind_address = "0.0.0.0"    # Optional: Override global bind_address for this port
 
 # Optional: Secure server-to-server port
 # [[connection.ports]]
@@ -164,6 +182,84 @@ description = "Secure IRC port (TLS)"
 # connection_type = "Server"
 # tls = true
 # description = "Secure server-to-server connections"
+# bind_address = "0.0.0.0"    # Optional: Override global bind_address for this port
+
+# Example: Bind different ports to different IPs (useful for multi-homed servers)
+# [[connection.ports]]
+# port = 6667
+# connection_type = "Client"
+# tls = false
+# description = "Public client port"
+# bind_address = "192.168.1.100"    # Bind to specific public IP
+#
+# [[connection.ports]]
+# port = 6668
+# connection_type = "Server"
+# tls = false
+# description = "Private server-to-server port"
+# bind_address = "10.0.0.50"        # Bind to private network IP
+
+
+################################################################################
+# CONNECTION CLASSES
+################################################################################
+# Connection classes allow you to define different connection parameters
+# for different groups of users or servers. Each class can specify:
+# - Maximum sendq/recvq buffer sizes
+# - Ping frequency and connection timeout
+# - Maximum clients in the class
+# - Per-class connection limits
+# - Throttling settings
+#
+# Classes are referenced by allow blocks and server links.
+
+# Default class for general users
+[[classes]]
+name = "default"
+description = "Default connection class for regular users"
+max_clients = 1000                  # Maximum number of clients in this class
+ping_frequency = 120                # Send PING every 120 seconds
+connection_timeout = 300            # Drop connection after 300 seconds of no response
+max_sendq = 1048576                 # 1MB send queue (outgoing data buffer)
+max_recvq = 8192                    # 8KB receive queue (incoming data buffer)
+disable_throttling = false          # Enable throttling for this class
+max_connections_per_ip = 5          # Maximum connections per IP for this class
+max_connections_per_host = 10       # Maximum connections per host for this class
+
+# Example: High-priority class for trusted users (e.g., opers, bots)
+# [[classes]]
+# name = "trusted"
+# description = "Trusted users with higher limits"
+# max_clients = 100
+# ping_frequency = 180              # Less frequent pings
+# connection_timeout = 600          # Longer timeout
+# max_sendq = 5242880               # 5MB send queue
+# max_recvq = 16384                 # 16KB receive queue
+# disable_throttling = true         # No throttling for trusted users
+# max_connections_per_ip = 20       # Allow more connections per IP
+
+# Example: Server class for server-to-server connections
+# [[classes]]
+# name = "server"
+# description = "Server-to-server connections"
+# max_clients = 10                  # Maximum number of servers
+# ping_frequency = 90               # Frequent pings to detect server disconnects
+# connection_timeout = 300
+# max_sendq = 10485760              # 10MB send queue for burst traffic
+# max_recvq = 32768                 # 32KB receive queue
+# disable_throttling = true         # No throttling for server connections
+
+# Example: Limited class for restricted users
+# [[classes]]
+# name = "restricted"
+# description = "Restricted users with lower limits"
+# max_clients = 500
+# ping_frequency = 60               # More frequent pings
+# connection_timeout = 180          # Shorter timeout
+# max_sendq = 524288                # 512KB send queue
+# max_recvq = 4096                  # 4KB receive queue
+# disable_throttling = false
+# max_connections_per_ip = 2        # Fewer connections per IP
 
 
 ################################################################################
@@ -171,11 +267,38 @@ description = "Secure IRC port (TLS)"
 ################################################################################
 
 [security]
-# Host access control
-allowed_hosts = ["*"]           # Allow all hosts (* = wildcard)
+# Host access control (deprecated - use allow_blocks for more granular control)
+allowed_hosts = ["*"]           # Allow all hosts (* = wildcard) - fallback if no allow blocks defined
 denied_hosts = []               # Block specific hosts (e.g., ["*.spam.com", "badhost.example.com"])
 
-# Optional: Require password for client connections
+# Allow blocks - define which hosts/IPs can connect and assign them to classes
+# If no allow blocks are defined, all hosts in allowed_hosts are allowed with the default class
+# Each allow block assigns connecting users to a specific connection class
+
+# Example: Default allow block for all users
+# [[security.allow_blocks]]
+# hosts = ["*"]                 # Allow all hostnames (* = wildcard, *.example.com = pattern)
+# ips = ["*"]                   # Allow all IP addresses (* = wildcard, supports CIDR notation)
+# class = "default"             # Assign to "default" connection class
+# description = "General users"
+
+# Example: Allow block for trusted hosts
+# [[security.allow_blocks]]
+# hosts = ["*.trusted.example.com", "operator.example.com"]
+# ips = ["192.168.1.0/24", "10.0.0.100"]
+# class = "trusted"             # Assign to "trusted" connection class
+# password = "secret123"        # Optional: Require password for these hosts
+# max_connections = 50          # Optional: Limit total connections from this block
+# description = "Trusted users and operators"
+
+# Example: Allow block for restricted hosts
+# [[security.allow_blocks]]
+# hosts = ["*.restricted.example.com"]
+# ips = ["203.0.113.0/24"]
+# class = "restricted"
+# description = "Restricted users with lower limits"
+
+# Optional: Require password for client connections (global password, overridden by allow block passwords)
 require_client_password = false
 client_password = ""            # Set a password if require_client_password = true
 
@@ -452,7 +575,8 @@ enable_efficient_broadcasting = true    # Use optimized broadcast algorithms
 # 1. Set server.name to your server's hostname
 # 2. Set network.name to your network name  
 # 3. Configure at least one client port (6667 is default)
-# 4. Run: cargo run --release
+# 4. Define at least one connection class (default class provided)
+# 5. Run: cargo run --release
 #
 # WITH CHANNELS (recommended):
 # 1. Add "channel" to modules.enabled_modules
@@ -469,6 +593,13 @@ enable_efficient_broadcasting = true    # Use optimized broadcast algorithms
 # 4. Restart server
 # 5. Oper up with: /OPER nickname password
 #
+# WITH CONNECTION CLASSES AND ALLOW BLOCKS:
+# 1. Define connection classes in [[classes]] sections
+# 2. Define allow blocks in [[security.allow_blocks]] sections
+# 3. Each allow block references a class to assign users to
+# 4. Classes control sendq/recvq, timeouts, throttling, etc.
+# 5. Server links can also reference classes for sendq management
+#
 # WITH SERVICES (Atheme/Anope):
 # 1. Configure services server in services section (uncomment example)
 # 2. Add services to network.super_servers
@@ -483,6 +614,43 @@ enable_efficient_broadcasting = true    # Use optimized broadcast algorithms
 # 3. Set security.tls.cert_file and security.tls.key_file paths
 # 4. Ensure port 6697 is configured (see connection.ports)
 # 5. Restart server
+#
+# WITH PER-PORT IP BINDING:
+# 1. Set global connection.bind_address for default behavior
+# 2. Override per-port by adding bind_address to individual [[connection.ports]]
+# 3. Useful for multi-homed servers with multiple network interfaces
+#
+################################################################################
+#
+# ADVANCED FEATURES OVERVIEW
+################################################################################
+#
+# CONNECTION CLASSES:
+# Classes group connections with similar parameters. Each class defines:
+# - Maximum sendq/recvq buffer sizes
+# - Ping frequency and connection timeout
+# - Maximum clients and connections per IP/host
+# - Throttling behavior
+#
+# ALLOW BLOCKS:
+# Allow blocks define which hosts/IPs can connect and assign them to classes.
+# They support:
+# - Wildcard patterns (*.example.com)
+# - CIDR notation for IPs (192.168.1.0/24)
+# - Per-block passwords
+# - Maximum connections per block
+#
+# PER-PORT IP BINDING:
+# Each port can bind to a different IP address, useful for:
+# - Separating public and private network traffic
+# - Multi-homed servers with multiple network interfaces
+# - Binding client ports to public IPs and server ports to private IPs
+#
+# SERVER LINK CLASSES:
+# Server links can reference classes for sendq management:
+# - High-bandwidth hubs get larger sendq buffers
+# - Leaf servers get smaller buffers
+# - Different timeout and ping settings per server type
 #
 ################################################################################
 

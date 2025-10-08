@@ -6,6 +6,24 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 // Remove unused tracing import when not needed
 
+/// Per-command statistics
+#[derive(Debug, Clone, Default)]
+pub struct CommandStats {
+    /// Number of times this command was executed locally
+    pub local_count: u64,
+    /// Number of times this command was received from remote servers
+    pub remote_count: u64,
+    /// Total bytes for this command (local + remote)
+    pub total_bytes: u64,
+}
+
+impl CommandStats {
+    /// Get total count (local + remote)
+    pub fn total_count(&self) -> u64 {
+        self.local_count + self.remote_count
+    }
+}
+
 /// Statistics data for the server
 #[derive(Debug, Clone)]
 pub struct ServerStatistics {
@@ -21,8 +39,8 @@ pub struct ServerStatistics {
     pub total_bytes_received: u64,
     /// Total bytes sent
     pub total_bytes_sent: u64,
-    /// Command usage statistics
-    pub command_usage: HashMap<String, u64>,
+    /// Command usage statistics (with bytes and local/remote tracking)
+    pub command_usage: HashMap<String, CommandStats>,
     /// Current number of connected clients
     pub current_clients: u32,
     /// Current number of connected servers
@@ -85,12 +103,18 @@ impl ServerStatistics {
     }
 
     /// Record a message received
-    pub fn record_message_received(&mut self, command: &str, bytes: usize) {
+    pub fn record_message_received(&mut self, command: &str, bytes: usize, is_remote: bool) {
         self.total_messages_received += 1;
         self.total_bytes_received += bytes as u64;
         
-        // Track command usage
-        *self.command_usage.entry(command.to_string()).or_insert(0) += 1;
+        // Track command usage with bytes and local/remote differentiation
+        let stats = self.command_usage.entry(command.to_string()).or_insert_with(CommandStats::default);
+        if is_remote {
+            stats.remote_count += 1;
+        } else {
+            stats.local_count += 1;
+        }
+        stats.total_bytes += bytes as u64;
     }
 
     /// Record a message sent
@@ -105,16 +129,16 @@ impl ServerStatistics {
     }
 
     /// Get command usage statistics
-    pub fn get_command_stats(&self) -> &HashMap<String, u64> {
+    pub fn get_command_stats(&self) -> &HashMap<String, CommandStats> {
         &self.command_usage
     }
 
-    /// Get top commands by usage
-    pub fn get_top_commands(&self, limit: usize) -> Vec<(String, u64)> {
+    /// Get top commands by usage (sorted by total count)
+    pub fn get_top_commands(&self, limit: usize) -> Vec<(String, CommandStats)> {
         let mut commands: Vec<_> = self.command_usage.iter().collect();
-        commands.sort_by(|a, b| b.1.cmp(a.1));
+        commands.sort_by(|a, b| b.1.total_count().cmp(&a.1.total_count()));
         commands.truncate(limit);
-        commands.into_iter().map(|(k, v)| (k.clone(), *v)).collect()
+        commands.into_iter().map(|(k, v)| (k.clone(), v.clone())).collect()
     }
 }
 
@@ -165,9 +189,9 @@ impl StatisticsManager {
     }
 
     /// Record a message received
-    pub async fn record_message_received(&self, command: &str, bytes: usize) {
+    pub async fn record_message_received(&self, command: &str, bytes: usize, is_remote: bool) {
         let mut stats = self.statistics.write().await;
-        stats.record_message_received(command, bytes);
+        stats.record_message_received(command, bytes, is_remote);
     }
 
     /// Record a message sent
@@ -247,29 +271,39 @@ mod tests {
     fn test_message_tracking() {
         let mut stats = ServerStatistics::new();
         
-        stats.record_message_received("PRIVMSG", 100);
-        stats.record_message_received("PRIVMSG", 50);
-        stats.record_message_received("JOIN", 30);
+        stats.record_message_received("PRIVMSG", 100, false); // local
+        stats.record_message_received("PRIVMSG", 50, true);   // remote
+        stats.record_message_received("JOIN", 30, false);     // local
         
         assert_eq!(stats.total_messages_received, 3);
         assert_eq!(stats.total_bytes_received, 180);
-        assert_eq!(stats.command_usage.get("PRIVMSG"), Some(&2));
-        assert_eq!(stats.command_usage.get("JOIN"), Some(&1));
+        
+        let privmsg_stats = stats.command_usage.get("PRIVMSG").unwrap();
+        assert_eq!(privmsg_stats.local_count, 1);
+        assert_eq!(privmsg_stats.remote_count, 1);
+        assert_eq!(privmsg_stats.total_count(), 2);
+        assert_eq!(privmsg_stats.total_bytes, 150);
+        
+        let join_stats = stats.command_usage.get("JOIN").unwrap();
+        assert_eq!(join_stats.local_count, 1);
+        assert_eq!(join_stats.remote_count, 0);
+        assert_eq!(join_stats.total_bytes, 30);
     }
 
     #[test]
     fn test_command_stats() {
         let mut stats = ServerStatistics::new();
         
-        stats.record_message_received("PRIVMSG", 100);
-        stats.record_message_received("PRIVMSG", 100);
-        stats.record_message_received("JOIN", 50);
-        stats.record_message_received("PART", 50);
+        stats.record_message_received("PRIVMSG", 100, false);
+        stats.record_message_received("PRIVMSG", 100, false);
+        stats.record_message_received("JOIN", 50, false);
+        stats.record_message_received("PART", 50, true);
         
         let top_commands = stats.get_top_commands(2);
         assert_eq!(top_commands.len(), 2);
         assert_eq!(top_commands[0].0, "PRIVMSG");
-        assert_eq!(top_commands[0].1, 2);
+        assert_eq!(top_commands[0].1.total_count(), 2);
+        assert_eq!(top_commands[0].1.total_bytes, 200);
     }
 
     #[tokio::test]
@@ -277,12 +311,18 @@ mod tests {
         let manager = StatisticsManager::new();
         
         manager.record_connection().await;
-        manager.record_message_received("TEST", 100).await;
+        manager.record_message_received("TEST", 100, false).await; // local
+        manager.record_message_received("JOIN", 50, true).await;  // remote
         
-        let stats = manager.statistics().read().await;
+        let stats_arc = manager.statistics();
+        let stats = stats_arc.read().await;
         assert_eq!(stats.total_connections, 1);
-        assert_eq!(stats.total_messages_received, 1);
-        assert_eq!(stats.total_bytes_received, 100);
+        assert_eq!(stats.total_messages_received, 2);
+        assert_eq!(stats.total_bytes_received, 150);
+        
+        let test_stats = stats.command_usage.get("TEST").unwrap();
+        assert_eq!(test_stats.local_count, 1);
+        assert_eq!(test_stats.remote_count, 0);
     }
 
     #[tokio::test]

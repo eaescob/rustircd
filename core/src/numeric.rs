@@ -838,6 +838,50 @@ impl NumericReply {
         )
     }
     
+    /// RPL_STATSLINKINFO with detailed sendq/recvq information
+    pub fn stats_link_info_detailed(
+        server: &str,
+        sendq_current: usize,
+        sendq_max: usize,
+        sendq_dropped: u64,
+        recvq_current: usize,
+        recvq_max: usize,
+        sent_messages: u64,
+        sent_bytes: u64,
+        received_messages: u64,
+        received_bytes: u64,
+        time_online: u64,
+    ) -> Message {
+        let sendq_percent = if sendq_max > 0 {
+            (sendq_current as f32 / sendq_max as f32 * 100.0) as u32
+        } else {
+            0
+        };
+        
+        let recvq_percent = if recvq_max > 0 {
+            (recvq_current as f32 / recvq_max as f32 * 100.0) as u32
+        } else {
+            0
+        };
+        
+        // Format: server sendq(current/max=percent%) recvq(current/max=percent%) sent_msgs sent_bytes recv_msgs recv_bytes time
+        let info_text = format!(
+            "{} SendQ:{}/{}({}%) RecvQ:{}/{}({}%) Msgs:{}s/{}r Bytes:{}s/{}r Time:{}s Dropped:{}",
+            server,
+            sendq_current, sendq_max, sendq_percent,
+            recvq_current, recvq_max, recvq_percent,
+            sent_messages, received_messages,
+            sent_bytes, received_bytes,
+            time_online,
+            sendq_dropped
+        );
+        
+        Self::RplStatsLinkInfo.reply(
+            "*",
+            vec![info_text],
+        )
+    }
+    
     /// RPL_STATSCOMMANDS
     pub fn stats_commands(command: &str, count: u32, bytes: u32, remote_count: u32) -> Message {
         Self::RplStatsCommands.reply(

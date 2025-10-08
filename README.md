@@ -67,8 +67,8 @@ cd rustircd
 # Build the project
 cargo build --release
 
-# Generate a configuration file
-cargo run -- config
+# Copy the example configuration file
+cp examples/configs/config.example.toml config.toml
 
 # Edit the configuration file
 nano config.toml
@@ -142,7 +142,23 @@ Network-specific services and bots:
 
 ## ⚙️ Configuration
 
-RustIRCD uses TOML configuration files with comprehensive options:
+RustIRCD uses TOML configuration files with comprehensive options.
+
+### Quick Start Configuration
+
+Copy the example configuration file to get started:
+
+```bash
+cp examples/configs/config.example.toml config.toml
+```
+
+The `examples/configs/config.example.toml` file includes:
+- **Bare minimum settings** required to start the IRC daemon (clearly marked)
+- **Optional features** with detailed explanations
+- **Module configuration** examples for all available modules
+- **Services integration** guide (Atheme, Anope, etc.)
+- **Security settings** for TLS, throttling, and access control
+- **Quick start guide** at the end of the file
 
 ### Main Configuration (`config.toml`)
 

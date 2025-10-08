@@ -1,0 +1,488 @@
+################################################################################
+# RustIRCd - Example Configuration File
+################################################################################
+#
+# This is a comprehensive configuration file for RustIRCd that covers:
+# 1. BARE MINIMUM settings required to start the IRC daemon
+# 2. Optional features and modules
+# 3. Services integration (like Atheme)
+# 4. Advanced networking and security features
+#
+# Lines marked with "# REQUIRED" are necessary for basic operation.
+# All other settings are optional with sensible defaults.
+#
+################################################################################
+
+################################################################################
+# SERVER SETTINGS (REQUIRED)
+################################################################################
+# Basic server identification and limits.
+# These are the minimum settings needed to start the IRC daemon.
+
+[server]
+# REQUIRED: Server name (must be a valid domain-like identifier)
+name = "example.irc.network"
+
+# REQUIRED: Server description shown in /WHOIS and /LINKS
+description = "RustIRCd - A Modern Rust IRC Server"
+
+# REQUIRED: Server version
+version = "0.1.0"
+
+# REQUIRED: Server creation date
+created = "2024-01-01 00:00:00 UTC"
+
+# REQUIRED: Maximum number of simultaneous client connections
+max_clients = 1000
+
+# Maximum channels a client can join (0 = no channels allowed)
+max_channels_per_client = 10
+
+# Maximum length limits for various IRC elements
+max_channel_name_length = 200
+max_nickname_length = 9
+max_topic_length = 390
+max_away_length = 160
+max_kick_length = 160
+max_quit_length = 160
+
+# Optional: Administrator contact information (shown in /ADMIN command)
+admin_email = "admin@example.irc.network"
+admin_location1 = "My IRC Network"
+admin_location2 = "https://example.irc.network"
+
+# Optional: Show detailed server information in /STATS
+show_server_details_in_stats = true
+
+# Optional: Path to MOTD (Message of the Day) file
+# Can be absolute or relative to the working directory
+motd_file = "motd.txt"
+
+
+################################################################################
+# NETWORK SETTINGS (REQUIRED)
+################################################################################
+# Network identification and server linking configuration.
+
+[network]
+# REQUIRED: Network name
+name = "ExampleNet"
+
+# REQUIRED: Network description
+description = "Example IRC Network"
+
+# Optional: Server-to-server links for IRC network federation
+# Leave empty ([]) for a standalone server
+links = [
+    # Example server link (commented out):
+    # { 
+    #   name = "hub.example.com",           # Remote server name
+    #   hostname = "hub.example.com",       # Remote server hostname/IP
+    #   port = 6668,                        # Remote server port
+    #   password = "linkpass123",           # Link password (must match on both sides)
+    #   tls = false,                        # Use TLS for server connection
+    #   outgoing = true                     # true = we connect to them, false = they connect to us
+    # },
+]
+
+# Optional: IRC Operators (users with elevated privileges)
+# To generate a password hash: echo -n "your_password" | sha256sum
+operators = [
+    # Example operator (commented out):
+    # { 
+    #   nickname = "admin",                                                         # Operator nickname
+    #   password_hash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",  # SHA256 hash of "password"
+    #   hostmask = "*@*",                                                          # Allowed hostmask pattern
+    #   flags = ["GlobalOper", "Administrator"],                                   # Operator privileges
+    #   enabled = true                                                             # Enable this operator
+    # },
+]
+
+# Optional: Super servers (services servers with special privileges)
+super_servers = [
+    # Example services server (see SERVICES section below for more details):
+    # { 
+    #   name = "services.example.com",      # Services server name
+    #   hostname = "services.example.com",  # Services server hostname/IP
+    #   port = 6669,                        # Services server port
+    #   password = "services123",           # Services link password
+    #   tls = false,                        # Use TLS for services connection
+    #   privileges = ["all"]                # Privileges granted to this server
+    # },
+]
+
+
+################################################################################
+# CONNECTION SETTINGS (REQUIRED)
+################################################################################
+# Network binding and connection limits.
+
+[connection]
+# REQUIRED: IP address to bind to (0.0.0.0 = all interfaces, 127.0.0.1 = localhost only)
+bind_address = "0.0.0.0"
+
+# Connection timeout in seconds (how long to wait for client to complete registration)
+connection_timeout = 60
+
+# Ping timeout in seconds (how long before disconnecting idle clients)
+ping_timeout = 300
+
+# Maximum connections per IP address
+max_connections_per_ip = 5
+
+# Maximum connections per hostname
+max_connections_per_host = 10
+
+# REQUIRED: Port configuration (at least one client port needed)
+# You can define multiple ports for different purposes
+
+# Standard client port (6667 is the traditional IRC port)
+[[connection.ports]]
+port = 6667
+connection_type = "Client"    # "Client" or "Server"
+tls = false
+description = "Standard IRC port"
+
+# Secure client port (6697 is the standard secure IRC port)
+[[connection.ports]]
+port = 6697
+connection_type = "Client"
+tls = true
+description = "Secure IRC port (TLS)"
+
+# Optional: Server-to-server port for linking
+# Uncomment if you want to allow server connections
+# [[connection.ports]]
+# port = 6668
+# connection_type = "Server"
+# tls = false
+# description = "Server-to-server connections"
+
+# Optional: Secure server-to-server port
+# [[connection.ports]]
+# port = 6698
+# connection_type = "Server"
+# tls = true
+# description = "Secure server-to-server connections"
+
+
+################################################################################
+# SECURITY SETTINGS (REQUIRED)
+################################################################################
+
+[security]
+# Host access control
+allowed_hosts = ["*"]           # Allow all hosts (* = wildcard)
+denied_hosts = []               # Block specific hosts (e.g., ["*.spam.com", "badhost.example.com"])
+
+# Optional: Require password for client connections
+require_client_password = false
+client_password = ""            # Set a password if require_client_password = true
+
+# Optional: Enable ident lookups (RFC 1413)
+enable_ident = true
+
+# Optional: Enable DNS lookups for hostnames
+enable_dns = true
+
+# Optional: Enable reverse DNS lookups
+enable_reverse_dns = true
+
+# TLS/SSL Configuration
+[security.tls]
+enabled = false                 # Set to true to enable TLS
+cert_file = "cert.pem"          # Path to SSL certificate
+key_file = "key.pem"            # Path to SSL private key
+ca_file = ""                    # Optional: Path to CA bundle
+version = "1.3"                 # TLS version (1.2 or 1.3)
+cipher_suites = [
+    "TLS_AES_256_GCM_SHA384",
+    "TLS_CHACHA20_POLY1305_SHA256"
+]
+
+# Server-to-Server Security
+[security.server_security]
+allow_remote_connect = true             # Allow remote server connections
+require_oper_for_connect = true         # Require operator privileges to initiate connections
+allowed_remote_hosts = ["*"]            # Allowed remote server hosts
+denied_remote_hosts = []                # Blocked remote server hosts
+max_hop_count = 10                      # Maximum hops in server chain
+require_server_auth = true              # Require password authentication for server links
+
+
+################################################################################
+# MODULE CONFIGURATION
+################################################################################
+# Modules extend the IRC server with additional functionality.
+# Start with an empty enabled_modules list for bare minimum IRC functionality.
+
+[modules]
+module_directory = "modules"
+enabled_modules = []            # Start empty; add modules as needed (see below)
+module_settings = {}
+
+# ============================================================================
+# CORE MODULES (Recommended)
+# ============================================================================
+# To enable core modules, add them to enabled_modules list:
+# enabled_modules = ["channel", "ircv3", "optional"]
+
+# - "channel": Channel management (JOIN, PART, TOPIC, MODE, etc.)
+#              Without this, users cannot join channels!
+# - "ircv3":   Modern IRC v3 features (SASL, capabilities, message tags, etc.)
+# - "optional": Optional IRC features (AWAY, ISON, USERHOST, etc.)
+
+# ============================================================================
+# ADMINISTRATIVE MODULES
+# ============================================================================
+# Add these to enabled_modules for operator functionality:
+
+# - "oper":    Operator authentication and commands
+# - "admin":   ADMIN command for showing administrator info
+# - "help":    Built-in help system for IRC commands
+
+# ============================================================================
+# MODERATION MODULES
+# ============================================================================
+# Ban and restriction modules (add to enabled_modules as needed):
+
+# - "kline":   K-Line (ban users by host/IP)
+# - "gline":   G-Line (global network ban)
+# - "dline":   D-Line (ban by IP address)
+# - "xline":   X-Line (ban by realname/GECOS)
+
+# ============================================================================
+# SPECIAL FEATURES
+# ============================================================================
+
+# - "knock":   KNOCK command (request channel invite)
+# - "monitor": MONITOR command (notify when users come online)
+# - "opme":    OPME command (operators can op themselves in channels)
+# - "sasl":    SASL authentication mechanism
+# - "set":     SET command for runtime configuration changes
+
+# ============================================================================
+# MESSAGING MODULES
+# ============================================================================
+# Operator messaging features
+
+[modules.messaging]
+enabled = false                 # Set to true to enable operator messaging
+
+# WALLOPS - Operator broadcast messages
+[modules.messaging.wallops]
+enabled = true                  # Enable WALLOPS command
+require_operator = true         # Only operators can send WALLOPS
+receiver_mode = "w"             # Users with +w mode receive WALLOPS
+self_only_mode = true           # Users can only set +w on themselves
+mode_requires_operator = false  # Non-operators can set +w on themselves
+
+# GLOBOPS - Global operator messages
+[modules.messaging.globops]
+enabled = true                  # Enable GLOBOPS command
+require_operator = true         # Only operators can send GLOBOPS
+receiver_mode = "g"             # Users with +g mode receive GLOBOPS
+self_only_mode = false          # Operators can set +g on other users
+mode_requires_operator = true   # Only operators can set +g mode
+
+# ============================================================================
+# THROTTLING MODULE
+# ============================================================================
+# Connection throttling prevents abuse by limiting connection rates
+
+[modules.throttling]
+enabled = false                         # Set to true to enable throttling
+
+# Maximum connections allowed per IP within time window
+max_connections_per_ip = 5
+
+# Time window for connection counting (seconds)
+time_window_seconds = 60
+
+# Initial throttling duration for first violation (seconds)
+initial_throttle_seconds = 10
+
+# Maximum escalation stages
+max_stages = 10
+
+# Factor by which throttling increases per stage (stage N = initial * factor^N)
+stage_factor = 10
+
+# How often to clean up expired throttle entries (seconds)
+cleanup_interval_seconds = 300
+
+
+################################################################################
+# SERVICES INTEGRATION
+################################################################################
+# Services provide nickname/channel registration, user accounts, etc.
+# Common services packages: Atheme, Anope
+#
+# To enable services:
+# 1. Set enabled_services = ["atheme"] (or your services package)
+# 2. Configure the service connection details below
+# 3. Add the services server to network.super_servers above
+# 4. Configure your services package to connect to this server
+
+[services]
+services_directory = "services"
+enabled_services = []           # Add ["atheme"] to enable Atheme services
+
+# Example Atheme Services Configuration
+# Uncomment and configure to enable:
+
+# [[services.services]]
+# name = "services.example.com"         # Services server name
+# service_type = "atheme"               # Type: "atheme" or "anope"
+# hostname = "localhost"                # Services hostname/IP
+# port = 6666                           # Port to connect on
+# password = "service_link_password"    # Link password
+# tls = false                           # Use TLS for services connection
+# enabled = true                        # Enable this service
+
+# [services.services.config]
+# service_name = "services.example.com"
+# protocol = "charybdis"                # IRC protocol to use
+# uplink_name = "example.irc.network"   # This server's name
+# send_password = "service_link_password"     # Password we send
+# receive_password = "service_link_password"  # Password we expect
+# flags = ["topicburst"]                # Service flags
+# class = "server"                      # Connection class
+
+# Service-specific settings
+[services.service_settings]
+# Atheme service settings (if enabled)
+# atheme = {
+#     enabled = true,
+#     protocol = "charybdis",
+#     uplink_name = "example.irc.network",
+#     send_password = "service_link_password",
+#     receive_password = "service_link_password",
+#     flags = ["topicburst"],
+#     class = "server",
+#     timeout_seconds = 30,
+#     reconnect_interval = 60,
+#     max_reconnect_attempts = 10
+# }
+
+
+################################################################################
+# DATABASE CONFIGURATION
+################################################################################
+# Internal database for history, channel tracking, and activity monitoring
+
+[database]
+max_history_size = 10000                # Maximum history entries to keep
+history_retention_days = 30             # Days to retain history
+enable_channel_tracking = true          # Track channel membership
+enable_activity_tracking = true         # Track user activity
+
+
+################################################################################
+# BROADCAST CONFIGURATION
+################################################################################
+# Settings for network-wide queries and message broadcasting
+
+[broadcast]
+max_concurrent_queries = 100            # Maximum simultaneous network queries
+query_timeout_seconds = 30              # Timeout for network queries
+enable_network_queries = true           # Enable network-wide queries
+enable_efficient_broadcasting = true    # Use optimized broadcast algorithms
+
+
+################################################################################
+# ADVANCED FEATURES
+################################################################################
+
+# ============================================================================
+# CUSTOM NUMERIC REPLIES
+# ============================================================================
+# Customize IRC numeric reply messages
+# Create a file with custom messages and reference it here
+
+# replies = "replies.toml"              # Path to custom replies file
+
+# ============================================================================
+# IRCV3 EXTENSIONS
+# ============================================================================
+# When "ircv3" is in enabled_modules, these extensions are available:
+# - account-notify: Notify clients when users authenticate
+# - away-notify: Notify clients when users go away/return
+# - batch: Batch multiple messages together
+# - cap: Capability negotiation
+# - extended-join: Extended JOIN messages with account info
+# - message-tags: Message tags support
+# - multi-prefix: Show all user channel modes in names/joins
+# - sasl: SASL authentication
+# - server-time: Server-time tags on messages
+
+# ============================================================================
+# SOLANUM EXTENSIONS
+# ============================================================================
+# Additional extensions inspired by Solanum IRCd
+# Uncomment and configure to enable:
+
+# [modules.ip_cloak]
+# enabled = false
+# secret_key = "change_this_to_random_string"    # Must be secure and unique
+# suffix = ".cloaked"                             # Suffix for cloaked hosts
+# ipv4_cidr = 16                                  # IPv4 CIDR for cloaking
+# ipv6_cidr = 32                                  # IPv6 CIDR for cloaking
+# mac_bits = 64                                   # MAC address bits to preserve
+# preserve_patterns = [                           # Don't cloak these patterns
+#     "*.example.com",
+#     "*.localhost"
+# ]
+
+# [modules.opme]
+# enabled = false                     # OPME command (operators self-op in channels)
+# require_oper = true                 # Require operator privileges
+# log_usage = true                    # Log OPME usage
+# notify_channel = true               # Notify channel when OPME is used
+# rate_limit_enabled = true           # Enable rate limiting
+# rate_limit_max_uses = 5             # Maximum uses within time window
+# rate_limit_time_window = 300        # Time window in seconds
+
+
+################################################################################
+# QUICK START GUIDE
+################################################################################
+#
+# BARE MINIMUM (standalone server):
+# 1. Set server.name to your server's hostname
+# 2. Set network.name to your network name  
+# 3. Configure at least one client port (6667 is default)
+# 4. Run: cargo run --release
+#
+# WITH CHANNELS (recommended):
+# 1. Add "channel" to modules.enabled_modules
+# 2. Restart server
+#
+# WITH MODERN IRC FEATURES:
+# 1. Add "channel", "ircv3", "optional" to modules.enabled_modules
+# 2. Restart server
+#
+# WITH OPERATORS:
+# 1. Generate password hash: echo -n "your_password" | sha256sum
+# 2. Add operator to network.operators list
+# 3. Add "oper" to modules.enabled_modules
+# 4. Restart server
+# 5. Oper up with: /OPER nickname password
+#
+# WITH SERVICES (Atheme/Anope):
+# 1. Configure services server in services section (uncomment example)
+# 2. Add services to network.super_servers
+# 3. Add "atheme" (or your services) to services.enabled_services
+# 4. Add "ircv3" and "sasl" to modules.enabled_modules (recommended)
+# 5. Configure your services package to link to this server
+# 6. Restart both servers
+#
+# WITH TLS/SSL:
+# 1. Generate or obtain SSL certificate and key
+# 2. Set security.tls.enabled = true
+# 3. Set security.tls.cert_file and security.tls.key_file paths
+# 4. Ensure port 6697 is configured (see connection.ports)
+# 5. Restart server
+#
+################################################################################
+

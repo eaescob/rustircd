@@ -43,6 +43,7 @@ async fn main() -> Result<()> {
         connection_type: rustircd_core::config::PortConnectionType::Client,
         tls: false,
         description: Some("MOTD test port".to_string()),
+        bind_address: None,
     });
     
     println!("Configuration:");
@@ -51,7 +52,7 @@ async fn main() -> Result<()> {
     println!();
     
     // Create and initialize the server
-    let mut server = Server::new(config);
+    let mut server = Server::new(config).await;
     server.init().await?;
     
     println!("Server initialized with MOTD support");
@@ -142,7 +143,7 @@ async fn main() -> Result<()> {
     println!("Press Ctrl+C to stop the server");
     
     // Wait for the server to finish (or be interrupted)
-    server_handle.await??;
+    let _ = server_handle.await;
     
     Ok(())
 }

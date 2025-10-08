@@ -2,10 +2,11 @@
 //! 
 //! This example demonstrates how SASL authentication is integrated into the IRCv3 capability negotiation system.
 
-use rustircd_core::{Client, Message, MessageType, Result};
-use rustircd_modules::ircv3::{Ircv3Module, SaslCapability};
+use rustircd_core::{Client, Message, MessageType, Result, Module};
+use rustircd_modules::ircv3::Ircv3Module;
 use std::collections::HashMap;
 use uuid::Uuid;
+use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -94,30 +95,16 @@ async fn main() -> Result<()> {
 }
 
 fn create_mock_client() -> Client {
-    let mut clients = HashMap::new();
     let client_id = Uuid::new_v4();
+    let (sender, _receiver) = mpsc::unbounded_channel();
     
     // Create a mock client - in a real implementation, this would be created by the server
-    let client = Client {
-        id: client_id,
-        nick: Some("testuser".to_string()),
-        username: Some("testuser".to_string()),
-        hostname: Some("test.example.com".to_string()),
-        realname: Some("Test User".to_string()),
-        server: Some("testserver".to_string()),
-        hops: 0,
-        connected_at: std::time::SystemTime::now(),
-        last_ping: std::time::SystemTime::now(),
-        is_away: false,
-        away_message: None,
-        user_modes: std::collections::HashSet::new(),
-        is_operator: false,
-        operator_flags: std::collections::HashSet::new(),
-        is_bot: false,
-        bot_info: None,
-        account_name: None,
-        channels: std::collections::HashSet::new(),
-    };
+    let client = Client::new(
+        client_id,
+        "127.0.0.1:12345".to_string(),
+        "127.0.0.1:6667".to_string(),
+        sender,
+    );
     
     client
 }

@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
     let config = create_server_config();
     
     // Create and initialize the server
-    let mut server = Server::new(config);
+    let mut server = Server::new(config).await;
     server.init().await?;
     
     println!("Server initialized with user mode support");
@@ -86,9 +86,10 @@ fn create_server_config() -> Config {
     config.connection.ports.clear();
     config.connection.ports.push(rustircd_core::config::PortConfig {
         port: 6667,
-        connection_type: rustircd_core::config::ConnectionType::Client,
+        connection_type: rustircd_core::config::PortConnectionType::Client,
         tls: false,
         description: Some("Standard IRC port".to_string()),
+        bind_address: None,
     });
     
     config

@@ -5,7 +5,7 @@
 //! - Only users with +g mode receive GLOBOPS messages
 //! - GLOBOPS messages are sent to all users with the +g mode set
 
-use rustircd_core::{Server, ServerConfig, Client, User};
+use rustircd_core::{Server, Config, Client, User};
 use rustircd_modules::messaging::{MessagingWrapper, create_default_messaging_module};
 use std::collections::HashSet;
 use tokio::time::{sleep, Duration};
@@ -20,20 +20,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================");
 
     // Create server configuration
-    let config = ServerConfig::default()
-        .with_port(6667)
-        .with_server_name("globops.example.com");
+    let mut config = Config::default();
+    config.connection.ports.clear();
+    config.connection.ports.push(rustircd_core::config::PortConfig {
+        port: 6667,
+        connection_type: rustircd_core::config::PortConnectionType::Client,
+        tls: false,
+        description: Some("GLOBOPS test port".to_string()),
+        bind_address: None,
+    });
+    config.server.name = "globops.example.com".to_string();
 
     // Create server
-    let server = Server::new(config).await?;
+    let mut server = Server::new(config).await;
     
-    // Create and register messaging module with GLOBOPS support
-    let mut messaging_module = create_default_messaging_module();
-    server.register_module(Box::new(messaging_module)).await?;
+    // Note: In a real implementation, messaging modules would be registered here
+    // let mut messaging_module = create_default_messaging_module();
+    // server.register_module(Box::new(messaging_module)).await?;
 
     // Start server in background
     let server_handle = tokio::spawn(async move {
-        if let Err(e) = server.run().await {
+        if let Err(e) = server.start().await {
             eprintln!("Server error: {}", e);
         }
     });

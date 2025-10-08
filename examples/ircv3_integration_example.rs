@@ -1,7 +1,7 @@
 //! Example showing how to integrate IRCv3 Extended Join and Multi-Prefix
 //! into the actual JOIN and NAMES command handlers
 
-use rustircd_core::{Client, Message, Result, Error};
+use rustircd_core::{Client, Message, Result, Error, Module};
 use rustircd_modules::ircv3::Ircv3Module;
 use std::collections::HashSet;
 
@@ -26,17 +26,17 @@ pub async fn handle_join_with_extended_join(
     let channel_name = &message.params[0];
     
     // Check if client has extended-join capability
-    if ircv3_module.is_extended_join_enabled(&client.id) {
+    if ircv3_module.is_extended_join_enabled(&client.id).await {
         // Create extended JOIN message with account name and real name
-        let account_name = ircv3_module.get_account_name(client);
-        let real_name = ircv3_module.get_real_name(client);
+        let account_name = ircv3_module.get_account_name(client).await;
+        let real_name = ircv3_module.get_real_name(client).await;
         
         let join_message = ircv3_module.create_extended_join_message(
             client,
             channel_name,
             account_name.as_deref(),
             real_name.as_deref(),
-        )?;
+        ).await?;
         
         // Send the extended JOIN message to channel members
         // (In a real implementation, you would broadcast this to all channel members)
@@ -48,7 +48,7 @@ pub async fn handle_join_with_extended_join(
         // :testuser!testuser@localhost JOIN #test
     } else {
         // Create standard JOIN message
-        let join_message = ircv3_module.create_standard_join_message(client, channel_name)?;
+        let join_message = ircv3_module.create_standard_join_message(client, channel_name).await?;
         
         // Send the standard JOIN message to channel members
         println!("Standard JOIN message: {}", join_message);
@@ -90,20 +90,20 @@ pub async fn handle_names_with_multi_prefix(
                 // In a real implementation, you would look up the user by ID
                 Some(format!("user{}", user_id.as_u128() % 1000))
             }
-        );
+        ).await;
         
         // Create NAMES reply
         let names_reply = ircv3_module.create_names_reply(
             client,
             &channel_name,
             &formatted_names,
-        )?;
+        ).await?;
         
         // Send NAMES reply to client
         println!("NAMES reply for {}: {}", channel_name, names_reply);
         
         // Create end of NAMES reply
-        let end_reply = ircv3_module.create_end_of_names_reply(&channel_name)?;
+        let end_reply = ircv3_module.create_end_of_names_reply(&channel_name).await?;
         println!("End of NAMES for {}: {}", channel_name, end_reply);
     }
     
@@ -204,7 +204,7 @@ pub async fn demonstrate_capabilities() -> Result<()> {
     let client = create_mock_client();
     
     println!("1. Standard JOIN (without extended-join capability):");
-    let standard_join = ircv3_module.create_standard_join_message(&client, "#test")?;
+    let standard_join = ircv3_module.create_standard_join_message(&client, "#test").await?;
     println!("   {}", standard_join);
     println!();
     
@@ -215,7 +215,7 @@ pub async fn demonstrate_capabilities() -> Result<()> {
         "#test",
         Some("alice"),
         Some("Alice User"),
-    )?;
+    ).await?;
     println!("   {}", extended_join);
     println!();
     
@@ -225,7 +225,7 @@ pub async fn demonstrate_capabilities() -> Result<()> {
         &client,
         &members,
         &|user_id| Some(format!("user{}", user_id.as_u128() % 1000)),
-    );
+    ).await;
     println!("   Names: {:?}", standard_names);
     println!();
     
@@ -235,7 +235,7 @@ pub async fn demonstrate_capabilities() -> Result<()> {
         &client,
         &members,
         &|user_id| Some(format!("user{}", user_id.as_u128() % 1000)),
-    );
+    ).await;
     println!("   Names: {:?}", multi_prefix_names);
     println!();
     
@@ -244,14 +244,15 @@ pub async fn demonstrate_capabilities() -> Result<()> {
         &client,
         "#test",
         &multi_prefix_names,
-    )?;
+    ).await?;
     println!("   {}", names_reply);
     
     Ok(())
 }
 
 fn create_mock_client() -> Client {
-    use rustircd_core::{Client, ConnectionType, ClientState, User};
+    use rustircd_core::{Client, User};
+    use rustircd_core::client::{ConnectionType, ClientState};
     use tokio::sync::mpsc;
     
     let client_id = uuid::Uuid::new_v4();
@@ -267,17 +268,13 @@ fn create_mock_client() -> Client {
     
     client.set_state(ClientState::Registered);
     
-    let user = User {
-        id: client_id,
-        nick: "testuser".to_string(),
-        username: "testuser".to_string(),
-        host: "localhost".to_string(),
-        realname: "Test User".to_string(),
-        channels: HashSet::new(),
-        modes: HashSet::new(),
-        away_message: None,
-        last_activity: std::time::SystemTime::now(),
-    };
+    let user = User::new(
+        "testuser".to_string(),
+        "testuser".to_string(),
+        "Test User".to_string(),
+        "localhost".to_string(),
+        "test.server".to_string(),
+    );
     
     client.set_user(user);
     client

@@ -4,7 +4,6 @@
 //! The S flag must be set in the operator configuration for SQUIT to work.
 
 use rustircd_core::{Config, Server, Result};
-use std::sync::Arc;
 use tokio;
 
 #[tokio::main]
@@ -24,7 +23,6 @@ async fn main() -> Result<()> {
     
     // Load configuration
     let config = Config::from_file("examples/configs/squit_operator.toml")?;
-    let config = Arc::new(config);
     
     println!("Configuration loaded successfully!");
     println!("Available operators with SQUIT privileges:");
@@ -49,7 +47,7 @@ async fn main() -> Result<()> {
     println!("Operators without the S flag will receive ERR_NOPRIVILEGES.");
     
     // Create and start server
-    let server = Server::new(config)?;
+    let mut server = Server::new(config).await;
     
     println!();
     println!("Starting server...");

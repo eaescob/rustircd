@@ -1,6 +1,6 @@
 //! In-memory database for users, servers, and user history
 
-use crate::{User, Error, Result};
+use crate::{User, Error, Result, UserLookupCache, ChannelMemberCache};
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -56,14 +56,35 @@ pub struct Database {
     user_channels: DashMap<String, HashSet<String>>,
     /// Channel members (channel -> set of nicknames)
     channel_members: DashMap<String, HashSet<String>>,
+    /// Cache for user nickname lookups (nickname -> UUID)
+    user_lookup_cache: Arc<UserLookupCache>,
+    /// Cache for channel member lists (channel -> member nicknames)
+    channel_member_cache: Arc<ChannelMemberCache>,
     /// Configuration
     max_history_size: usize,
     history_retention_days: i64,
 }
 
 impl Database {
-    /// Create a new database
+    /// Create a new database with default cache settings
     pub fn new(max_history_size: usize, history_retention_days: i64) -> Self {
+        Self::new_with_cache_config(
+            max_history_size,
+            history_retention_days,
+            10000,  // Default user cache size
+            std::time::Duration::from_secs(300),  // Default user cache TTL (5 minutes)
+            std::time::Duration::from_secs(30),   // Default channel cache TTL (30 seconds)
+        )
+    }
+
+    /// Create a new database with custom cache configuration
+    pub fn new_with_cache_config(
+        max_history_size: usize,
+        history_retention_days: i64,
+        user_cache_size: usize,
+        user_cache_ttl: std::time::Duration,
+        channel_cache_ttl: std::time::Duration,
+    ) -> Self {
         Self {
             users: DashMap::new(),
             users_by_nick: DashMap::new(),
@@ -73,9 +94,30 @@ impl Database {
             channels: DashMap::new(),
             user_channels: DashMap::new(),
             channel_members: DashMap::new(),
+            user_lookup_cache: Arc::new(UserLookupCache::new(user_cache_size, user_cache_ttl)),
+            channel_member_cache: Arc::new(ChannelMemberCache::new(channel_cache_ttl)),
             max_history_size,
             history_retention_days,
         }
+    }
+
+    /// Create a new database from configuration
+    pub fn from_config(config: &crate::config::DatabaseConfig) -> Self {
+        let user_cache_size = config.user_cache_size.unwrap_or(10000);
+        let user_cache_ttl = std::time::Duration::from_secs(
+            config.user_cache_ttl_seconds.unwrap_or(300)
+        );
+        let channel_cache_ttl = std::time::Duration::from_secs(
+            config.channel_cache_ttl_seconds.unwrap_or(30)
+        );
+
+        Self::new_with_cache_config(
+            config.max_history_size,
+            config.history_retention_days,
+            user_cache_size,
+            user_cache_ttl,
+            channel_cache_ttl,
+        )
     }
 
     // User management
@@ -97,8 +139,11 @@ impl Database {
         }
 
         self.users.insert(user_id, user.clone());
-        self.users_by_nick.insert(nick_lower, user_id);
+        self.users_by_nick.insert(nick_lower.clone(), user_id);
         self.users_by_ident.insert(ident, user_id);
+
+        // Cache the user lookup
+        self.user_lookup_cache.insert(nick_lower, user_id);
 
         Ok(())
     }
@@ -112,12 +157,17 @@ impl Database {
             self.users_by_nick.remove(&nick_lower);
             self.users_by_ident.remove(&ident);
 
-            // Remove from all channels
+            // Invalidate user lookup cache
+            self.user_lookup_cache.remove(&nick_lower);
+
+            // Remove from all channels and invalidate channel member cache
             if let Some((_, channels)) = self.user_channels.remove(&user.nick) {
                 for channel_name in channels {
                     if let Some(mut members) = self.channel_members.get_mut(&channel_name) {
                         members.remove(&user.nick);
                     }
+                    // Invalidate channel member cache for each affected channel
+                    self.channel_member_cache.invalidate(&channel_name);
                 }
             }
 
@@ -135,12 +185,30 @@ impl Database {
         self.users.get(user_id).map(|entry| entry.value().clone())
     }
 
-    /// Get user by nickname
+    /// Get user by nickname (with cache)
     pub fn get_user_by_nick(&self, nick: &str) -> Option<User> {
         let nick_lower = nick.to_lowercase();
-        self.users_by_nick.get(&nick_lower)
-            .and_then(|entry| self.users.get(entry.value()))
-            .map(|entry| entry.value().clone())
+        
+        // Try cache first
+        if let Some(user_id) = self.user_lookup_cache.get(&nick_lower) {
+            if let Some(user) = self.users.get(&user_id) {
+                return Some(user.value().clone());
+            }
+            // Cache hit but user no longer exists - invalidate cache entry
+            self.user_lookup_cache.remove(&nick_lower);
+        }
+        
+        // Cache miss - do full lookup
+        if let Some(entry) = self.users_by_nick.get(&nick_lower) {
+            let user_id = *entry.value();
+            if let Some(user) = self.users.get(&user_id) {
+                // Update cache for future lookups
+                self.user_lookup_cache.insert(nick_lower, user_id);
+                return Some(user.value().clone());
+            }
+        }
+        
+        None
     }
 
     /// Get user by ident (username@hostname)
@@ -162,7 +230,11 @@ impl Database {
             if old_nick != user.nick {
                 let old_nick_lower = old_nick.to_lowercase();
                 self.users_by_nick.remove(&old_nick_lower);
-                self.users_by_nick.insert(new_nick_lower, *user_id);
+                self.users_by_nick.insert(new_nick_lower.clone(), *user_id);
+                
+                // Invalidate old nickname from cache and add new one
+                self.user_lookup_cache.remove(&old_nick_lower);
+                self.user_lookup_cache.insert(new_nick_lower, *user_id);
             }
 
             // Update ident mapping if changed
@@ -257,6 +329,9 @@ impl Database {
         self.channel_members.entry(channel.to_string()).or_insert_with(HashSet::new)
             .insert(nick.to_string());
 
+        // Invalidate channel member cache
+        self.channel_member_cache.invalidate(channel);
+
         Ok(())
     }
 
@@ -272,14 +347,30 @@ impl Database {
             members.remove(nick);
         }
 
+        // Invalidate channel member cache
+        self.channel_member_cache.invalidate(channel);
+
         Ok(())
     }
 
-    /// Get users in a channel
+    /// Get users in a channel (with cache)
     pub fn get_channel_users(&self, channel: &str) -> Vec<String> {
-        self.channel_members.get(channel)
+        // Try cache first
+        if let Some(members) = self.channel_member_cache.get(channel) {
+            return members;
+        }
+        
+        // Cache miss - do full lookup
+        let members: Vec<String> = self.channel_members.get(channel)
             .map(|entry| entry.iter().cloned().collect())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        
+        // Update cache for future lookups
+        if !members.is_empty() {
+            self.channel_member_cache.cache(channel.to_string(), members.clone());
+        }
+        
+        members
     }
 
     /// Get channels for a user
@@ -403,6 +494,44 @@ impl Database {
         self.servers.iter()
             .map(|entry| entry.user_count)
             .sum::<u32>() + self.user_count() as u32
+    }
+
+    // Cache management
+
+    /// Get user lookup cache statistics
+    pub fn get_user_cache_stats(&self) -> crate::CacheStats {
+        self.user_lookup_cache.stats()
+    }
+
+    /// Get channel member cache statistics
+    pub fn get_channel_cache_stats(&self) -> crate::CacheStats {
+        self.channel_member_cache.stats()
+    }
+
+    /// Clear user lookup cache
+    pub fn clear_user_cache(&self) {
+        self.user_lookup_cache.clear();
+    }
+
+    /// Clear channel member cache
+    pub fn clear_channel_cache(&self) {
+        self.channel_member_cache.clear();
+    }
+
+    /// Clear all caches
+    pub fn clear_all_caches(&self) {
+        self.user_lookup_cache.clear();
+        self.channel_member_cache.clear();
+    }
+
+    /// Get a reference to the user lookup cache (for advanced use cases)
+    pub fn user_lookup_cache(&self) -> &Arc<UserLookupCache> {
+        &self.user_lookup_cache
+    }
+
+    /// Get a reference to the channel member cache (for advanced use cases)
+    pub fn channel_member_cache(&self) -> &Arc<ChannelMemberCache> {
+        &self.channel_member_cache
     }
 }
 

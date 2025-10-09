@@ -513,6 +513,12 @@ pub struct DatabaseConfig {
     pub enable_channel_tracking: bool,
     /// Enable user activity tracking
     pub enable_activity_tracking: bool,
+    /// User lookup cache size (nickname → UUID mappings)
+    pub user_cache_size: Option<usize>,
+    /// User lookup cache TTL in seconds
+    pub user_cache_ttl_seconds: Option<u64>,
+    /// Channel member cache TTL in seconds
+    pub channel_cache_ttl_seconds: Option<u64>,
 }
 
 /// Broadcasting configuration
@@ -569,6 +575,9 @@ impl Default for DatabaseConfig {
             history_retention_days: 30,
             enable_channel_tracking: true,
             enable_activity_tracking: true,
+            user_cache_size: Some(10000),
+            user_cache_ttl_seconds: Some(300),  // 5 minutes
+            channel_cache_ttl_seconds: Some(30),  // 30 seconds
         }
     }
 }

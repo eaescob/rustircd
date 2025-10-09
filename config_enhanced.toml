@@ -46,6 +46,17 @@ history_retention_days = 30
 enable_channel_tracking = true
 enable_activity_tracking = true
 
+# Cache configuration (optional - improves lookup performance by 10-100x)
+user_cache_size = 10000              # Max cached nickname→UUID mappings
+user_cache_ttl_seconds = 300         # 5 minutes user cache TTL
+channel_cache_ttl_seconds = 30       # 30 seconds channel member cache TTL
+
+# Recommended settings by network size:
+#   Small (<1000):      10000 cache, 300s TTL (default)
+#   Medium (1K-5K):     25000 cache, 600s TTL
+#   Large (5K-10K):     50000 cache, 900s TTL
+#   Very Large (>10K):  100000 cache, 1800s TTL
+
 # New broadcasting configuration
 [broadcast]
 max_concurrent_queries = 100

@@ -44,6 +44,7 @@ impl<T> CacheEntry<T> {
 }
 
 /// LRU cache with configurable size and TTL
+#[derive(Debug)]
 pub struct LruCache<K, V> {
     cache: Arc<RwLock<HashMap<K, CacheEntry<V>>>>,
     access_order: Arc<RwLock<Vec<K>>>,
@@ -264,6 +265,7 @@ impl DnsCache {
 pub type UserLookupCache = LruCache<String, Uuid>;
 
 /// Channel member cache for fast membership checks
+#[derive(Debug)]
 pub struct ChannelMemberCache {
     cache: DashMap<String, CacheEntry<Vec<String>>>,
     default_ttl: Duration,

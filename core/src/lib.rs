@@ -43,7 +43,7 @@ pub use error::{Error, Result};
 pub use message::{Message, MessageType, Prefix};
 pub use module::{Module, ModuleManager};
 pub use server::Server;
-pub use user::User;
+pub use user::{User, UserState};
 pub use user_modes::{UserMode, UserModeManager};
 pub use extensible_modes::{
     CustomUserMode, ExtensibleModeRegistry,

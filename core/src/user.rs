@@ -6,6 +6,17 @@ use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use uuid::Uuid;
 
+/// User state for netsplit recovery
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserState {
+    /// User is actively connected
+    Active,
+    /// User is in a netsplit grace period
+    NetSplit,
+    /// User has been removed
+    Removed,
+}
+
 /// Bot information for IRCv3 bot-mode
 #[derive(Debug, Clone)]
 pub struct BotInfo {
@@ -56,6 +67,10 @@ pub struct User {
     pub is_bot: bool,
     /// Bot information (if user is a bot)
     pub bot_info: Option<BotInfo>,
+    /// User state (for netsplit recovery)
+    pub state: UserState,
+    /// Time when user entered netsplit state (for delayed cleanup)
+    pub split_at: Option<DateTime<Utc>>,
 }
 
 impl User {
@@ -79,6 +94,8 @@ impl User {
             away_message: None,
             is_bot: false,
             bot_info: None,
+            state: UserState::Active,
+            split_at: None,
         }
     }
     

@@ -98,7 +98,7 @@ pub struct Channel {
     pub exception_masks: HashSet<String>,
     /// Invite masks
     pub invite_masks: HashSet<String>,
-    /// Creation time
+    /// Channel creation time (for netsplit timestamp resolution)
     pub created_at: DateTime<Utc>,
 }
 

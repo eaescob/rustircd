@@ -1,0 +1,229 @@
+# Example RustIRCd Configuration with Netsplit Recovery Features
+# This configuration demonstrates all netsplit recovery options
+
+[server]
+name = "hub.rustircd.net"
+description = "RustIRCd Hub Server with Netsplit Recovery"
+version = "0.1.0"
+created = "2025-01-09"
+max_clients = 1000
+max_channels_per_client = 10
+max_channel_name_length = 200
+max_nickname_length = 30
+max_topic_length = 390
+max_away_length = 160
+max_kick_length = 160
+max_quit_length = 160
+admin_email = "admin@rustircd.net"
+admin_location1 = "RustIRCd Network Hub"
+admin_location2 = "https://github.com/rustircd"
+show_server_details_in_stats = true
+motd_file = "motd.txt"
+
+[network]
+name = "RustIRCd"
+description = "Rust IRC Network with Advanced Netsplit Recovery"
+
+# Server links for network topology
+[[network.links]]
+name = "leaf1.rustircd.net"
+hostname = "leaf1.rustircd.net"
+port = 6667
+password = "linkpassword123"
+tls = false
+outgoing = true
+class = "server"
+
+[[network.links]]
+name = "leaf2.rustircd.net"
+hostname = "leaf2.rustircd.net"
+port = 6667
+password = "linkpassword456"
+tls = false
+outgoing = true
+class = "server"
+
+# Operator configuration
+[[network.operators]]
+nickname = "admin"
+password_hash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8" # password
+hostmask = "*@*"
+flags = ["GlobalOper", "Administrator", "RemoteConnect", "Spy", "Squit"]
+enabled = true
+
+# Super servers (services)
+[[network.super_servers]]
+name = "services.rustircd.net"
+hostname = "localhost"
+port = 6667
+password = "servicespass"
+
+[connection]
+bind_address = "0.0.0.0"
+
+[[connection.ports]]
+port = 6667
+connection_type = "Both"
+tls = false
+description = "Standard IRC port"
+
+[[connection.ports]]
+port = 6697
+connection_type = "Client"
+tls = true
+description = "Secure client connections"
+
+[[connection.ports]]
+port = 7000
+connection_type = "Server"
+tls = false
+description = "Server-to-server connections"
+
+# Connection classes for resource management
+[[classes]]
+name = "default"
+ping_frequency = 120
+connection_timeout = 600
+sendq = 1048576      # 1MB
+recvq = 8192         # 8KB
+max_clients = 500
+max_connections_per_ip = 3
+max_connections_per_host = 10
+throttle_enabled = true
+
+[[classes]]
+name = "server"
+ping_frequency = 180
+connection_timeout = 900
+sendq = 10485760     # 10MB
+recvq = 32768        # 32KB
+max_clients = 0      # No limit for servers
+max_connections_per_ip = 10
+max_connections_per_host = 20
+throttle_enabled = false
+
+[security]
+[security.server_security]
+max_hop_count = 10
+
+[security.tls]
+enabled = true
+cert_file = "cert.pem"
+key_file = "key.pem"
+
+[modules]
+module_directory = "modules"
+auto_load_modules = ["channel", "ircv3"]
+
+[database]
+max_history_size = 10000
+history_retention_days = 30
+enable_channel_tracking = true
+enable_activity_tracking = true
+user_cache_size = 10000
+user_cache_ttl_seconds = 300
+channel_cache_ttl_seconds = 30
+
+[broadcast]
+max_concurrent_queries = 100
+query_timeout_seconds = 30
+enable_network_queries = true
+enable_efficient_broadcasting = true
+
+[services]
+services_directory = "services"
+enabled_services = ["atheme"]
+
+# Netsplit Recovery Configuration
+[netsplit]
+# Enable automatic reconnection to disconnected servers
+auto_reconnect = true
+
+# Base delay in seconds for reconnection attempts (exponential backoff starts here)
+# First attempt: 30s, then 60s, 120s, 300s, 600s, etc.
+reconnect_delay_base = 30
+
+# Maximum delay in seconds between reconnection attempts
+# After enough failed attempts, delay will cap at this value (30 minutes)
+reconnect_delay_max = 1800
+
+# Grace period in seconds before permanently removing split users
+# Users remain in netsplit state for this duration, allowing quick rejoins
+# Set to 0 to disable grace period (immediate removal)
+split_user_grace_period = 60
+
+# Enable burst protocol optimization for quick reconnects
+# When a server reconnects within the optimization window, send delta burst
+# instead of full burst to reduce network overhead
+burst_optimization_enabled = true
+
+# Time window in seconds for burst optimization
+# If server reconnects within this window, use optimized burst (5 minutes)
+burst_optimization_window = 300
+
+# Notify operators about netsplits and reconnections
+# Includes split severity (Minor/Major/Critical) and affected user count
+notify_opers_on_split = true
+
+# Example configurations for different scenarios:
+
+# Configuration 1: Aggressive reconnection (for unstable networks)
+# auto_reconnect = true
+# reconnect_delay_base = 15
+# reconnect_delay_max = 600
+# split_user_grace_period = 120
+# burst_optimization_enabled = true
+# burst_optimization_window = 600
+
+# Configuration 2: Conservative reconnection (for stable networks)
+# auto_reconnect = true
+# reconnect_delay_base = 60
+# reconnect_delay_max = 3600
+# split_user_grace_period = 30
+# burst_optimization_enabled = true
+# burst_optimization_window = 180
+
+# Configuration 3: Disabled netsplit recovery (traditional IRC behavior)
+# auto_reconnect = false
+# reconnect_delay_base = 30
+# reconnect_delay_max = 1800
+# split_user_grace_period = 0
+# burst_optimization_enabled = false
+# burst_optimization_window = 300
+# notify_opers_on_split = false
+
+# How Netsplit Recovery Works:
+#
+# 1. **Automatic Reconnection**:
+#    - When a configured server disconnects, RustIRCd automatically attempts to reconnect
+#    - Uses exponential backoff: 30s, 60s, 120s, 300s, 600s, up to max delay
+#    - Operators are notified of reconnection success/failure
+#
+# 2. **Netsplit Detection**:
+#    - QUIT messages use standard IRC netsplit notation: "server1.name server2.name"
+#    - Split severity calculated: Minor (75%+), Major (50-75%), Critical (<50%)
+#    - Operators receive detailed netsplit notifications
+#
+# 3. **Delayed User Cleanup**:
+#    - Users marked as NetSplit instead of immediately removed
+#    - Remain in netsplit state for grace period (60s default)
+#    - Prevents channel mode loss during brief netsplits
+#    - Permanently removed after grace period expires
+#
+# 4. **Nick Collision Detection**:
+#    - Detects nickname collisions during server rejoin
+#    - Same timestamp: both users killed
+#    - Different timestamps: older user wins
+#    - Operators notified of collisions
+#
+# 5. **Burst Optimization**:
+#    - Tracks last burst sync timestamp per server
+#    - Quick rejoins (within 5 min) use delta burst
+#    - Skips users in netsplit state
+#    - Reduces burst size by 80-95%
+#
+# 6. **Network Topology Tracking**:
+#    - Calculates split severity based on remaining servers
+#    - Helps operators understand impact of splits
+#    - Logs whether server is on majority or minority side
+

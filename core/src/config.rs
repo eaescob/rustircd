@@ -26,6 +26,8 @@ pub struct Config {
     pub broadcast: BroadcastConfig,
     /// Services settings
     pub services: ServicesConfig,
+    /// Netsplit recovery settings
+    pub netsplit: NetsplitConfig,
     /// Numeric replies configuration
     pub replies: Option<RepliesConfig>,
 }
@@ -568,6 +570,25 @@ pub struct ServiceDefinition {
     pub enabled: bool,
 }
 
+/// Netsplit recovery configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetsplitConfig {
+    /// Enable automatic reconnection to disconnected servers
+    pub auto_reconnect: bool,
+    /// Base delay in seconds for reconnection attempts (exponential backoff starts here)
+    pub reconnect_delay_base: u64,
+    /// Maximum delay in seconds between reconnection attempts
+    pub reconnect_delay_max: u64,
+    /// Grace period in seconds before permanently removing split users
+    pub split_user_grace_period: u64,
+    /// Enable burst protocol optimization for quick reconnects
+    pub burst_optimization_enabled: bool,
+    /// Time window in seconds for burst optimization (if rejoin within this window, send delta)
+    pub burst_optimization_window: u64,
+    /// Notify operators about netsplits and reconnections
+    pub notify_opers_on_split: bool,
+}
+
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
@@ -593,6 +614,20 @@ impl Default for BroadcastConfig {
     }
 }
 
+impl Default for NetsplitConfig {
+    fn default() -> Self {
+        Self {
+            auto_reconnect: true,
+            reconnect_delay_base: 30,      // 30 seconds initial delay
+            reconnect_delay_max: 1800,     // 30 minutes maximum delay
+            split_user_grace_period: 60,   // 60 seconds grace period
+            burst_optimization_enabled: true,
+            burst_optimization_window: 300, // 5 minutes window
+            notify_opers_on_split: true,
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -605,6 +640,7 @@ impl Default for Config {
             database: DatabaseConfig::default(),
             broadcast: BroadcastConfig::default(),
             services: ServicesConfig::default(),
+            netsplit: NetsplitConfig::default(),
             replies: None, // Will be loaded from replies.toml if available
         }
     }

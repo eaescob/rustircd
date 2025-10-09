@@ -716,9 +716,11 @@ All implementations follow best practices with comprehensive error handling, log
 ### Long Term (Month 4+)
 1. Advanced IRCv3 capabilities
 2. Database persistence options
-3. Clustering and distribution
-4. Performance benchmarking
-5. Security auditing
+3. Netsplit recovery improvements
+4. Burst protocol optimization for large networks
+5. Network topology routing enhancements
+6. Performance benchmarking
+7. Security auditing
 
 ## 🏗️ **Architecture Highlights**
 

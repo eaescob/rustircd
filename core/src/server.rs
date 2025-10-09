@@ -307,6 +307,12 @@ impl Server {
         // Start connection timeout checker
         self.start_timeout_checker().await?;
         
+        // Start split cleanup task
+        self.start_split_cleanup_task().await?;
+        
+        // Start automatic reconnection task
+        self.start_auto_reconnect_task()?;
+        
         Ok(())
     }
     
@@ -349,6 +355,114 @@ impl Server {
                             MessageType::Custom("ERROR".to_string()),
                             vec!["Connection timeout".to_string()],
                         ));
+                    }
+                }
+            }
+        });
+        
+        Ok(())
+    }
+    
+    /// Start split cleanup task to remove users that have been in netsplit for too long
+    async fn start_split_cleanup_task(&self) -> Result<()> {
+        let grace_period = self.config.netsplit.split_user_grace_period;
+        
+        if grace_period == 0 {
+            tracing::info!("Split user grace period is disabled");
+            return Ok(());
+        }
+        
+        let database = self.database.clone();
+        let nick_to_id = self.nick_to_id.clone();
+        let users = self.users.clone();
+        
+        tokio::spawn(async move {
+            loop {
+                // Check every 30 seconds
+                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                
+                let mut users_to_remove = Vec::new();
+                let now = chrono::Utc::now();
+                
+                // Find users in netsplit state that have exceeded grace period
+                for user in database.get_all_users() {
+                    if user.state == crate::UserState::NetSplit {
+                        if let Some(split_at) = user.split_at {
+                            let elapsed = (now - split_at).num_seconds() as u64;
+                            if elapsed >= grace_period {
+                                tracing::debug!("User {} exceeded netsplit grace period ({}/{}s)", 
+                                               user.nick, elapsed, grace_period);
+                                users_to_remove.push(user);
+                            }
+                        }
+                    }
+                }
+                
+                // Remove expired netsplit users
+                for user in users_to_remove {
+                    // Remove from nick_to_id mapping
+                    {
+                        let mut nick_to_id = nick_to_id.write().await;
+                        nick_to_id.remove(&user.nick);
+                    }
+                    
+                    // Remove from users map
+                    {
+                        let mut users = users.write().await;
+                        users.remove(&user.id);
+                    }
+                    
+                    // Remove from database
+                    if let Err(e) = database.remove_user(user.id) {
+                        tracing::warn!("Failed to remove expired netsplit user {} from database: {}", user.nick, e);
+                    } else {
+                        tracing::info!("Removed netsplit user {} after grace period", user.nick);
+                    }
+                }
+            }
+        });
+        
+        Ok(())
+    }
+    
+    /// Start automatic reconnection task for disconnected servers
+    fn start_auto_reconnect_task(&self) -> Result<()> {
+        if !self.config.netsplit.auto_reconnect {
+            tracing::info!("Automatic reconnection is disabled");
+            return Ok(());
+        }
+        
+        let server_connections = self.server_connections.clone();
+        let config = self.config.clone();
+        // Note: Cannot use Arc::new(self.clone()) - would need to restructure for full auto-reconnect
+        // For now, we'll do basic checking without calling connect_to_server
+        
+        tokio::spawn(async move {
+            loop {
+                // Check every 30 seconds for servers that need reconnection
+                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                
+                // Get configured server links
+                let configured_servers: Vec<_> = config.network.links.iter()
+                    .filter(|link| link.outgoing) // Only auto-reconnect outgoing connections
+                    .collect();
+                
+                for link in configured_servers {
+                    // Check if this server is currently connected
+                    let is_connected = server_connections.get_connection(&link.name).await.is_some();
+                    
+                    if !is_connected {
+                        // Server is disconnected - log for monitoring
+                        // TODO: Implement actual reconnection logic
+                        // This would require refactoring Server to be Arc-wrapped at creation
+                        // or using a separate reconnection service
+                        tracing::info!(
+                            "Server {} is disconnected and configured for auto-reconnect ({}:{})",
+                            link.name, link.hostname, link.port
+                        );
+                        tracing::debug!(
+                            "Auto-reconnection framework active - manual CONNECT or service restart required for actual reconnection"
+                        );
                     }
                 }
             }
@@ -689,26 +803,47 @@ impl Server {
         let user_count = users_to_remove.len();
         tracing::info!("Found {} users from server {}", user_count, server_name);
         
-        // 2. Remove all users from this server and broadcast their quit
-        for user in users_to_remove {
-            // Remove from nick_to_id mapping
-            {
-                let mut nick_to_id = self.nick_to_id.write().await;
-                nick_to_id.remove(&user.nick);
+        // 2. Handle users from this server - either mark as netsplit or remove immediately
+        // Use standard IRC netsplit notation: "our_server quitting_server"
+        let netsplit_message = format!("{} {}", self.config.server.name, server_name);
+        let grace_period_enabled = self.config.netsplit.split_user_grace_period > 0;
+        
+        for mut user in users_to_remove {
+            if grace_period_enabled {
+                // Mark user as in netsplit state (delayed cleanup)
+                user.state = crate::UserState::NetSplit;
+                user.split_at = Some(chrono::Utc::now());
+                
+                // Update user in database
+                if let Err(e) = self.database.add_user(user.clone()) {
+                    tracing::warn!("Failed to update user {} to netsplit state: {}", user.nick, e);
+                }
+                
+                tracing::debug!("Marked user {} as netsplit (grace period: {}s)", 
+                               user.nick, self.config.netsplit.split_user_grace_period);
+            } else {
+                // Immediate removal (no grace period)
+                // Remove from nick_to_id mapping
+                {
+                    let mut nick_to_id = self.nick_to_id.write().await;
+                    nick_to_id.remove(&user.nick);
+                }
+                
+                // Remove from users map
+                {
+                    let mut users = self.users.write().await;
+                    users.remove(&user.id);
+                }
+                
+                // Remove from database
+                if let Err(e) = self.database.remove_user(user.id) {
+                    tracing::warn!("Failed to remove user {} from database: {}", user.nick, e);
+                }
+                
+                tracing::debug!("Removed user {} from server {}", user.nick, server_name);
             }
             
-            // Remove from users map
-            {
-                let mut users = self.users.write().await;
-                users.remove(&user.id);
-            }
-            
-            // Remove from database
-            if let Err(e) = self.database.remove_user(user.id) {
-                tracing::warn!("Failed to remove user {} from database: {}", user.nick, e);
-            }
-            
-            // Broadcast QUIT to local clients
+            // Broadcast QUIT to local clients with netsplit notation
             let quit_msg = Message::with_prefix(
                 Prefix::User {
                     nick: user.nick.clone(),
@@ -716,14 +851,12 @@ impl Server {
                     host: user.host.clone(),
                 },
                 MessageType::Quit,
-                vec![format!("{} {}", server_name, quit_reason)],
+                vec![netsplit_message.clone()],
             );
             
             if let Err(e) = self.broadcast_system.broadcast_to_all(quit_msg, None).await {
                 tracing::warn!("Failed to broadcast quit for {}: {}", user.nick, e);
             }
-            
-            tracing::debug!("Removed user {} from server {}", user.nick, server_name);
         }
         
         // 3. Remove server from database
@@ -759,12 +892,66 @@ impl Server {
         tracing::info!("Server {} quit processing complete. Cleaned up {} users", 
                       server_name, user_count);
         
+        // 7. Notify operators about the netsplit if configured
+        if self.config.netsplit.notify_opers_on_split {
+            // Calculate network topology and split severity
+            let connected_servers = self.server_connections.server_count().await;
+            let total_servers = connected_servers + 1; // +1 for the split server
+            let split_severity = self.calculate_split_severity(connected_servers, total_servers);
+            
+            let notice_msg = format!(
+                "{} netsplit: lost connection to {} ({} users affected) - {} [{} servers remain]",
+                split_severity, server_name, user_count, quit_reason, connected_servers
+            );
+            if let Err(e) = self.send_operator_notice(&notice_msg).await {
+                tracing::warn!("Failed to send operator notice for netsplit: {}", e);
+            }
+        }
+        
         Ok(())
+    }
+    
+    /// Calculate split severity based on network topology
+    fn calculate_split_severity(&self, connected_servers: usize, total_servers: usize) -> &'static str {
+        if total_servers == 0 {
+            return "Minor";
+        }
+        
+        let percentage = (connected_servers as f64 / total_servers as f64) * 100.0;
+        
+        if percentage >= 75.0 {
+            "Minor" // We still have 75%+ of the network
+        } else if percentage >= 50.0 {
+            "Major" // We have 50-75% of the network
+        } else {
+            "Critical" // We have less than 50% (minority side)
+        }
     }
     
     /// Send server burst to propagate our state to a newly connected server
     async fn send_server_burst(&self, target_server: &str) -> Result<()> {
         tracing::info!("Sending server burst to {}", target_server);
+        
+        // Check if burst optimization is enabled and if this is a quick rejoin
+        let is_optimized_burst = if self.config.netsplit.burst_optimization_enabled {
+            if let Some(connection) = self.server_connections.get_connection(target_server).await {
+                if let Some(last_sync) = connection.info.last_burst_sync {
+                    let elapsed = (chrono::Utc::now() - last_sync).num_seconds() as u64;
+                    let within_window = elapsed <= self.config.netsplit.burst_optimization_window;
+                    if within_window {
+                        tracing::info!("Using optimized burst for {} (last sync {}s ago)", 
+                                     target_server, elapsed);
+                    }
+                    within_window
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
         
         // Send basic server information
         let server_info = Message::with_prefix(
@@ -780,11 +967,15 @@ impl Server {
         self.server_connections.send_to_server(target_server, server_info).await?;
         
         // Send user burst for all local users
+        // If optimized burst, we could track and only send changes, but for simplicity
+        // we'll just send all users. A full implementation would track user changes.
         let users = self.users.read().await;
         let mut user_count = 0;
         for user in users.values() {
             // Only burst users on our server (local users)
-            if user.server == self.config.server.name {
+            // Skip users in netsplit state for optimized bursts
+            if user.server == self.config.server.name && 
+               (!is_optimized_burst || user.state == crate::UserState::Active) {
                 let user_burst = Message::new(
                     MessageType::UserBurst,
                     vec![
@@ -805,7 +996,14 @@ impl Server {
             }
         }
         
-        tracing::info!("Server burst to {} completed ({} users sent)", target_server, user_count);
+        // Update last burst sync timestamp for burst optimization
+        if let Some(mut connection) = self.server_connections.get_connection(target_server).await {
+            connection.info.last_burst_sync = Some(chrono::Utc::now());
+            tracing::debug!("Updated last_burst_sync for {}", target_server);
+        }
+        
+        tracing::info!("Server burst to {} completed ({} users sent, optimized: {})", 
+                      target_server, user_count, is_optimized_burst);
         Ok(())
     }
     
@@ -1268,6 +1466,75 @@ impl Server {
             .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
             .ok_or_else(|| Error::MessageParse(format!("Invalid timestamp in burst: {}", connected_at_str)))?;
         
+        // Check for nick collision
+        if let Some(existing_user) = self.database.get_user_by_nick(&nick) {
+            // Nick collision detected!
+            tracing::warn!("Nick collision detected for {} during burst", nick);
+            
+            // Compare timestamps - kill both if same timestamp, keep older if different
+            if existing_user.registered_at == connected_at {
+                // Same timestamp - kill both users (IRC collision rules)
+                tracing::info!("Nick collision with same timestamp - killing both users: {}", nick);
+                
+                // Kill existing user
+                let kill_msg_local = Message::with_prefix(
+                    Prefix::Server(self.config.server.name.clone()),
+                    MessageType::Kill,
+                    vec![existing_user.nick.clone(), "Nick collision".to_string()],
+                );
+                if let Err(e) = self.broadcast_system.broadcast_to_all(kill_msg_local, None).await {
+                    tracing::warn!("Failed to broadcast kill for existing user {}: {}", existing_user.nick, e);
+                }
+                let _ = self.database.remove_user(existing_user.id);
+                
+                // Kill incoming user by sending KILL to source server
+                let kill_msg_remote = Message::with_prefix(
+                    Prefix::Server(self.config.server.name.clone()),
+                    MessageType::Kill,
+                    vec![nick.clone(), "Nick collision".to_string()],
+                );
+                if let Err(e) = self.server_connections.broadcast_message(&kill_msg_remote, None).await {
+                    tracing::warn!("Failed to send KILL for remote user {}: {}", nick, e);
+                }
+                
+                // Notify operators
+                let notice_msg = format!("Nick collision: {} (killed both users)", nick);
+                if let Err(e) = self.send_operator_notice(&notice_msg).await {
+                    tracing::warn!("Failed to send operator notice for collision: {}", e);
+                }
+                
+                return Ok(()); // Don't add the new user
+            } else if existing_user.registered_at < connected_at {
+                // Existing user is older - reject new user
+                tracing::info!("Nick collision: keeping older user {} (local)", nick);
+                
+                let kill_msg = Message::with_prefix(
+                    Prefix::Server(self.config.server.name.clone()),
+                    MessageType::Kill,
+                    vec![nick.clone(), "Nick collision (older nick wins)".to_string()],
+                );
+                if let Err(e) = self.server_connections.broadcast_message(&kill_msg, None).await {
+                    tracing::warn!("Failed to send KILL for remote user {}: {}", nick, e);
+                }
+                
+                return Ok(()); // Keep existing, reject new
+            } else {
+                // New user is older - replace existing user
+                tracing::info!("Nick collision: replacing with older user {} (remote)", nick);
+                
+                let kill_msg = Message::with_prefix(
+                    Prefix::Server(self.config.server.name.clone()),
+                    MessageType::Kill,
+                    vec![existing_user.nick.clone(), "Nick collision (older nick wins)".to_string()],
+                );
+                if let Err(e) = self.broadcast_system.broadcast_to_all(kill_msg, None).await {
+                    tracing::warn!("Failed to broadcast kill for user {}: {}", existing_user.nick, e);
+                }
+                let _ = self.database.remove_user(existing_user.id);
+                // Continue to add the new user below
+            }
+        }
+        
         // Create user object for remote user
         let user = User {
             id: user_id,
@@ -1286,6 +1553,8 @@ impl Server {
             away_message: None,
             is_bot: false,
             bot_info: None,
+            state: crate::UserState::Active,
+            split_at: None,
         };
         
         // Add user to database
@@ -1362,7 +1631,13 @@ impl Server {
         tracing::debug!("Received channel burst from server {}: {}", server_name, channel_name);
         
         // Parse channel burst parameters
-        // Format: CBURST #channel [topic] [modes] [members...]
+        // Format: CBURST #channel [timestamp] [topic] [modes] [members...]
+        // TODO: Enhanced netsplit recovery - Add timestamp-based conflict resolution:
+        // - Parse channel creation timestamp from message.params[1]
+        // - Compare with local channel's created_at timestamp
+        // - If remote timestamp is older, accept their modes/ops
+        // - If local timestamp is older, reject their modes and send our state back
+        // - This prevents op wars and mode desync after netsplits (TS6 protocol)
         let topic = if message.params.len() > 1 && !message.params[1].is_empty() {
             Some(message.params[1].clone())
         } else {

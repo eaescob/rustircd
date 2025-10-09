@@ -21,6 +21,70 @@ pub enum ServerConnectionState {
     Disconnected,
 }
 
+/// Reconnection state for automatic reconnection
+#[derive(Debug, Clone)]
+pub struct ReconnectionState {
+    /// Number of reconnection attempts
+    pub attempts: u32,
+    /// Time of last disconnect
+    pub last_disconnect_time: DateTime<Utc>,
+    /// Time of last reconnection attempt
+    pub last_attempt_time: Option<DateTime<Utc>>,
+    /// Current backoff delay in seconds
+    pub current_delay: u64,
+    /// Whether reconnection is enabled for this server
+    pub enabled: bool,
+}
+
+impl ReconnectionState {
+    /// Create a new reconnection state
+    pub fn new() -> Self {
+        Self {
+            attempts: 0,
+            last_disconnect_time: Utc::now(),
+            last_attempt_time: None,
+            current_delay: 30, // Start with 30 seconds
+            enabled: true,
+        }
+    }
+    
+    /// Calculate next reconnection delay with exponential backoff
+    pub fn calculate_next_delay(&mut self, base_delay: u64, max_delay: u64) -> u64 {
+        // Exponential backoff: base * 2^attempts, capped at max_delay
+        let delay = base_delay * 2_u64.pow(self.attempts.min(10)); // Cap power at 10 to prevent overflow
+        self.current_delay = delay.min(max_delay);
+        self.current_delay
+    }
+    
+    /// Check if it's time to attempt reconnection
+    pub fn should_attempt_reconnect(&self) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        
+        match self.last_attempt_time {
+            None => true, // Never attempted, should try
+            Some(last_attempt) => {
+                let elapsed = (Utc::now() - last_attempt).num_seconds() as u64;
+                elapsed >= self.current_delay
+            }
+        }
+    }
+    
+    /// Record a reconnection attempt
+    pub fn record_attempt(&mut self) {
+        self.attempts += 1;
+        self.last_attempt_time = Some(Utc::now());
+    }
+    
+    /// Reset reconnection state after successful connection
+    pub fn reset(&mut self) {
+        self.attempts = 0;
+        self.current_delay = 30;
+        self.last_attempt_time = None;
+    }
+}
+
 /// Server information
 #[derive(Debug, Clone)]
 pub struct ServerInfo {
@@ -50,6 +114,10 @@ pub struct ServerInfo {
     pub parent_server: Option<String>,
     /// Child servers
     pub child_servers: Vec<String>,
+    /// Reconnection state (for automatic reconnection)
+    pub reconnection_state: Option<ReconnectionState>,
+    /// Time of last burst sync (for burst optimization)
+    pub last_burst_sync: Option<DateTime<Utc>>,
 }
 
 /// Server connection
@@ -148,6 +216,8 @@ impl ServerConnection {
                 link_password: None,
                 use_tls: false,
                 is_outgoing,
+                reconnection_state: None,
+                last_burst_sync: None,
                 hop_count: 1,
                 parent_server: None,
                 child_servers: Vec::new(),

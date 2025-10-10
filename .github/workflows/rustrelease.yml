@@ -1,0 +1,249 @@
+# .github/workflows/release.yml
+name: Rust Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  id-token: write   # REQUIRED for keyless signing with cosign & SLSA OIDC
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }} / ${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+
+      - name: Install dependencies for musl (Linux)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools pkg-config
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: Build (debug)
+        run: cargo build --target ${{ matrix.target }}
+
+      - name: Run tests
+        run: cargo test --target ${{ matrix.target }} --all-features
+
+  build-release:
+    name: Build & Package (${{ matrix.os }} / ${{ matrix.target }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rel-${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            rel-${{ runner.os }}-cargo-${{ matrix.target }}-
+
+      - name: Install dependencies for musl (Linux)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools pkg-config
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: Set binary name
+        id: bin
+        shell: bash
+        run: |
+          NAME=$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[0].name')
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare package
+        id: pkg
+        shell: bash
+        run: |
+          NAME="${{ steps.bin.outputs.name }}"
+          TARGET="${{ matrix.target }}"
+          VERSION="${GITHUB_REF_NAME}"
+          BIN_DIR="target/${TARGET}/release"
+          EXT=""
+          if [[ "${{ matrix.os }}" == "Windows" ]]; then EXT=".exe"; fi
+
+          OUTDIR="${NAME}-${VERSION}-${TARGET}"
+          mkdir -p "${OUTDIR}"
+
+          cp "${BIN_DIR}/${NAME}${EXT}" "${OUTDIR}/"
+          [[ -f LICENSE ]] && cp LICENSE "${OUTDIR}/"
+          [[ -f README.md ]] && cp README.md "${OUTDIR}/"
+
+          echo "outdir=${OUTDIR}" >> $GITHUB_OUTPUT
+
+      - name: Archive (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          tar -czf "${{ steps.pkg.outputs.outdir }}.tar.gz" "${{ steps.pkg.outputs.outdir }}"
+
+      - name: Archive (zip)
+        if: matrix.archive == 'zip'
+        run: |
+          powershell -Command "Compress-Archive -Path '${{ steps.pkg.outputs.outdir }}/*' -DestinationPath '${{ steps.pkg.outputs.outdir }}.zip'"
+
+      - name: Install cargo-cyclonedx
+        if: matrix.os != 'windows-latest'
+        run: cargo install cargo-cyclonedx --locked
+
+      - name: Generate SBOM (CycloneDX)
+        id: sbom
+        shell: bash
+        run: |
+          NAME="${{ steps.bin.outputs.name }}"
+          TARGET="${{ matrix.target }}"
+          VERSION="${GITHUB_REF_NAME}"
+          SBOM="${NAME}-${VERSION}-${TARGET}.sbom.json"
+          # Generates SBOM for the package; for multi-crate workspaces, consider --workspace
+          cargo cyclonedx --format json --output "$SBOM"
+          echo "sbom=$SBOM" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.outdir }}
+          path: |
+            ${{ steps.pkg.outputs.outdir }}.tar.gz
+            ${{ steps.pkg.outputs.outdir }}.zip
+            ${{ steps.sbom.outputs.sbom }}
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release with SBOM, Signatures, and SLSA
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./dist
+
+      - name: Generate checksum manifest
+        run: |
+          cd dist
+          shopt -s globstar
+          : > SHA256SUMS
+          for f in **/*.tar.gz **/*.zip **/*.sbom.json; do
+            [ -f "$f" ] && sha256sum "$f" >> SHA256SUMS
+          done
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Cosign login (keyless)
+        # No private key; uses GitHub OIDC to get Fulcio cert for keyless signing
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: echo "Using keyless signing via OIDC"
+
+      - name: Sign artifacts with cosign
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          set -euo pipefail
+          cd dist
+          shopt -s globstar
+          # Sign compressed artifacts and SBOMs
+          for f in **/*.tar.gz **/*.zip **/*.sbom.json; do
+            [ -f "$f" ] || continue
+            echo "Signing $f"
+            cosign sign-blob --output-signature "$f.sig" --output-certificate "$f.pem" "$f"
+          done
+          # Sign checksum manifest as canonical reference
+          cosign sign-blob --output-signature "SHA256SUMS.sig" --output-certificate "SHA256SUMS.pem" "SHA256SUMS"
+
+      - name: Create SLSA provenance attestation
+        id: slsa
+        uses: slsa-framework/slsa-github-generator@v2.0.0
+        with:
+          # Generate provenance for the release tag; attestation will be stored as files in workspace
+          base64-subject: false
+          upload-assets: false
+          compile-artifacts-path: dist
+          # By default, it attests the repo and commit/ref building the artifacts.
+
+      - name: Collect SLSA attestation
+        run: |
+          mkdir -p dist/slsa
+          # The generator writes files in the workspace; move them under dist/slsa
+          if ls provenance* 1> /dev/null 2>&1; then
+            mv provenance* dist/slsa/ || true
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            dist/**/*.tar.gz
+            dist/**/*.zip
+            dist/**/*.sbom.json
+            dist/SHA256SUMS
+            dist/**/*.sig
+            dist/**/*.pem
+            dist/slsa/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

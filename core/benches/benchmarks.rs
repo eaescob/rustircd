@@ -301,6 +301,116 @@ fn benchmark_user_modes(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_netsplit_operations(c: &mut Criterion) {
+    use rustircd_core::server_connection::ReconnectionState;
+    
+    let mut group = c.benchmark_group("netsplit");
+    
+    // Benchmark reconnection state calculations
+    group.bench_function("calculate_backoff", |b| {
+        let mut state = ReconnectionState::new();
+        b.iter(|| {
+            state.attempts = black_box(3);
+            state.calculate_next_delay(30, 1800)
+        });
+    });
+    
+    group.bench_function("should_attempt_reconnect", |b| {
+        let state = ReconnectionState::new();
+        b.iter(|| {
+            state.should_attempt_reconnect()
+        });
+    });
+    
+    // Benchmark user state transitions
+    group.bench_function("user_state_check", |b| {
+        let user = User::new(
+            "alice".to_string(),
+            "user".to_string(),
+            "Alice User".to_string(),
+            "host.example.com".to_string(),
+            "server.example.com".to_string(),
+        );
+        
+        b.iter(|| {
+            black_box(user.state == rustircd_core::UserState::NetSplit)
+        });
+    });
+    
+    group.finish();
+}
+
+fn benchmark_server_to_server(c: &mut Criterion) {
+    let mut group = c.benchmark_group("server_to_server");
+    
+    // Benchmark message construction for server propagation
+    group.bench_function("create_kill_message", |b| {
+        b.iter(|| {
+            Message::with_prefix(
+                Prefix::Server(black_box("server.example.com".to_string())),
+                MessageType::Kill,
+                vec![
+                    black_box("victim".to_string()),
+                    black_box("Killed by operator".to_string())
+                ]
+            )
+        });
+    });
+    
+    group.bench_function("create_server_quit", |b| {
+        b.iter(|| {
+            Message::with_prefix(
+                Prefix::Server(black_box("hub.example.com".to_string())),
+                MessageType::ServerQuit,
+                vec![
+                    black_box("leaf.example.com".to_string()),
+                    black_box("Connection timeout".to_string())
+                ]
+            )
+        });
+    });
+    
+    // Benchmark nick propagation message
+    group.bench_function("create_nick_propagation", |b| {
+        b.iter(|| {
+            Message::with_prefix(
+                Prefix::User {
+                    nick: black_box("oldnick".to_string()),
+                    user: black_box("user".to_string()),
+                    host: black_box("host.example.com".to_string()),
+                },
+                MessageType::Nick,
+                vec![black_box("newnick".to_string())]
+            )
+        });
+    });
+    
+    group.finish();
+}
+
+fn benchmark_network_topology(c: &mut Criterion) {
+    let mut group = c.benchmark_group("network_topology");
+    
+    // Benchmark split severity calculation
+    group.bench_function("calculate_split_severity", |b| {
+        b.iter(|| {
+            let connected = black_box(7);
+            let total = black_box(10);
+            let percentage = (connected as f64 / total as f64) * 100.0;
+            
+            if percentage >= 75.0 {
+                "Minor"
+            } else if percentage >= 50.0 {
+                "Major"
+            } else {
+                "Critical"
+            }
+        });
+    });
+    
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_message_parsing,
@@ -310,7 +420,10 @@ criterion_group!(
     benchmark_broadcast_operations,
     benchmark_batch_optimizer,
     benchmark_validation,
-    benchmark_user_modes
+    benchmark_user_modes,
+    benchmark_netsplit_operations,
+    benchmark_server_to_server,
+    benchmark_network_topology
 );
 
 criterion_main!(benches);

@@ -85,6 +85,83 @@ Latency statistics:
   P99:     1.42ms
 ```
 
+### 3. Channel Load Test (`channel_load.py`)
+
+Tests channel-specific performance with varying channel sizes.
+
+```bash
+./channel_load.py --channels 50 --max-users 500 --duration 180
+```
+
+**Options:**
+- `--host`: IRC server hostname (default: localhost)
+- `--port`: IRC server port (default: 6667)
+- `--channels`: Number of channels (default: 20)
+- `--max-users`: Maximum users per channel (default: 100)
+- `--duration`: Test duration in seconds (default: 180)
+
+**Metrics:**
+- Channel broadcast latency by size
+- JOIN performance
+- Message distribution time
+- Success rate
+
+**Example Output:**
+```
+Channel Size         Count      Min        Avg        P50        P95        P99        Max       
+--------------------------------------------------------------------------------
+small (10-50)        150        0.12       0.45       0.42       0.85       1.20       2.10
+medium (50-200)      100        0.25       0.78       0.75       1.50       2.10       3.50
+large (200-1000)     50         0.45       1.25       1.20       2.80       4.50       6.20
+```
+
+### 4. Mixed Workload Test (`mixed_workload.py`)
+
+Simulates realistic IRC traffic patterns with mixed operations.
+
+```bash
+./mixed_workload.py --users 100 --channels 20 --duration 300
+```
+
+**Options:**
+- `--host`: IRC server hostname (default: localhost)
+- `--port`: IRC server port (default: 6667)
+- `--users`: Number of users (default: 50)
+- `--channels`: Number of channels (default: 10)
+- `--duration`: Test duration in seconds (default: 300)
+
+**Traffic Distribution:**
+- 70% channel messages
+- 20% private messages
+- 5% joins/parts
+- 3% mode changes
+- 2% operator commands
+
+**Metrics:**
+- Operations per second
+- Success rate
+- Traffic distribution validation
+
+**Example Output:**
+```
+Duration:            300.05s
+Active clients:      98/100
+
+Message Statistics:
+  Channel messages:  21000
+  Private messages:  6000
+  Joins:             750
+  Parts:             750
+
+Traffic Distribution:
+  Channel messages:  70.2%
+  Private messages:  20.1%
+  Joins/Parts:       5.0%
+
+Operations/second:   100.5
+Success rate:        99.8%
+```
+
 ## Running Tests
 
 ### Basic Usage

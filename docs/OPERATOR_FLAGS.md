@@ -4,6 +4,30 @@
 
 RustIRCd implements a **granular operator permission system** based on flags. Instead of a single "operator" privilege level, administrators can combine specific flags to create operators with precisely the permissions they need. This follows the principle of **least privilege** and allows for fine-grained access control.
 
+## Architecture
+
+The operator system follows a **modular architecture**:
+
+- **Operator Flags** are defined in `core` (`core/src/config.rs`) - used by all commands
+- **Flag Definitions** are in `core/src/user.rs` - part of the User struct  
+- **OPER Authentication** is handled by the **oper module** (`modules/src/oper.rs`)
+- **Flag Checking** is done in core commands (SQUIT, KILL, CONNECT, etc.)
+
+This means:
+- ✅ Operator flags are **always available** (core functionality)
+- ✅ OPER command requires the **oper module** to be loaded
+- ✅ Commands like SQUIT, KILL, CONNECT check flags directly (no module needed)
+- ✅ Configuration is in `config.toml` (operators section)
+
+**To enable operator authentication:**
+```toml
+# config.toml
+[modules]
+enabled_modules = ["oper", "channel", "ircv3"]  # Include "oper"
+```
+
+Without the oper module, users cannot authenticate as operators (OPER command unavailable), but operator flag checking still works for any users who have flags set through other means.
+
 ## Available Operator Flags
 
 ### 🌐 GlobalOper

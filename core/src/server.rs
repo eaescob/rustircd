@@ -9,7 +9,7 @@ use crate::{
     LookupService, RehashService,
 };
 use chrono::Utc;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::net::TcpListener;
@@ -1789,7 +1789,16 @@ impl Server {
                 self.handle_connect(client_id, message).await?;
             }
             MessageType::Oper => {
-                self.handle_oper(client_id, message).await?;
+                // OPER is now handled by the oper module
+                // If we reach here, the module isn't loaded
+                let connection_handler = self.connection_handler.read().await;
+                if let Some(client) = connection_handler.get_client(&client_id) {
+                    let error_msg = Message::new(
+                        MessageType::Error,
+                        vec!["OPER command requires the oper module to be loaded".to_string()]
+                    );
+                    let _ = client.send(error_msg);
+                }
             }
             MessageType::Kill => {
                 self.handle_kill(client_id, message).await?;
@@ -3209,84 +3218,8 @@ impl Server {
         Ok(())
     }
 
-    /// Handle OPER command
-    async fn handle_oper(&self, client_id: uuid::Uuid, message: Message) -> Result<()> {
-        let connection_handler = self.connection_handler.read().await;
-        let client = connection_handler.get_client(&client_id)
-            .ok_or_else(|| Error::User("Client not found".to_string()))?;
-
-        // Check if client is registered
-        if !client.is_registered() {
-            let error_msg = NumericReply::not_registered();
-            let _ = client.send(error_msg);
-            return Ok(());
-        }
-
-        // Validate parameters
-        if message.params.len() < 2 {
-            let error_msg = NumericReply::need_more_params("OPER");
-            let _ = client.send(error_msg);
-            return Ok(());
-        }
-
-        let _oper_name = &message.params[0];
-        let password = &message.params[1];
-
-        // Get user and authenticate
-        let database = self.database.clone();
-        if let Some(mut user) = database.get_user(&client.id) {
-            if self.authenticate_operator(&mut user, password).await {
-                // Send success message with operator privileges
-                let success_msg = NumericReply::youre_oper();
-                let _ = client.send(success_msg);
-                
-                // Send operator privileges information
-                self.send_operator_privileges(&client, &user).await;
-                
-                // Update user in database
-                database.update_user(&client.id, user.clone())?;
-                
-                tracing::info!("User {} authenticated as operator with flags: {:?}", 
-                    user.nick, user.operator_flags);
-            } else {
-                // Authentication failed
-                let error_msg = NumericReply::password_mismatch();
-                let _ = client.send(error_msg);
-                
-                tracing::warn!("Failed operator authentication attempt for user {} from {}", 
-                    user.nick, user.host);
-            }
-        } else {
-            let error_msg = NumericReply::password_mismatch();
-            let _ = client.send(error_msg);
-        }
-
-        Ok(())
-    }
-
-    /// Check if a user is an operator
-    async fn is_user_operator(&self, user: &User) -> bool {
-        user.is_operator
-    }
-
-    /// Authenticate operator and set flags
-    async fn authenticate_operator(&self, user: &mut User, password: &str) -> bool {
-        if let Some(operator_config) = self.config.authenticate_operator(
-            &user.nick,
-            password,
-            &user.username,
-            &user.host,
-        ) {
-            // Set operator flags
-            let flags: HashSet<crate::config::OperatorFlag> = operator_config.flags.iter().cloned().collect();
-            user.set_operator_flags(flags);
-            
-            tracing::info!("Operator {} authenticated with flags: {:?}", user.nick, user.operator_flags);
-            true
-        } else {
-            false
-        }
-    }
+    // OPER command is now handled by the oper module
+    // Operator authentication and flag setting is fully modular
 
     /// Check if a host is allowed for remote connections
     fn is_host_allowed(&self, host: &str) -> bool {
@@ -3835,40 +3768,7 @@ impl Server {
         channels.into_iter().collect()
     }
 
-    /// Send operator privileges information to a client
-    async fn send_operator_privileges(&self, client: &Client, user: &User) {
-        let mut privileges = Vec::new();
-        
-        if user.is_global_oper() {
-            privileges.push("Global Operator (o)");
-        }
-        if user.is_local_oper() {
-            privileges.push("Local Operator (O)");
-        }
-        if user.can_remote_connect() {
-            privileges.push("Remote Connect (C)");
-        }
-        if user.can_local_connect() {
-            privileges.push("Local Connect (c)");
-        }
-        if user.is_administrator() {
-            privileges.push("Administrator (A)");
-        }
-        if user.is_spy() {
-            privileges.push("Spy (y)");
-        }
-        
-        if !privileges.is_empty() {
-            let privileges_msg = Message::new(
-                crate::MessageType::Notice,
-                vec![
-                    user.nick.clone(),
-                    format!("Operator privileges: {}", privileges.join(", "))
-                ],
-            );
-            let _ = client.send(privileges_msg);
-        }
-    }
+    // send_operator_privileges is now in the oper module
 }
 
 /// Load certificates from file

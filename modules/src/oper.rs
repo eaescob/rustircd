@@ -46,49 +46,68 @@ impl OperModule {
         Self { config }
     }
     
-    /// Handle OPER command
-    pub async fn handle_oper(&self, client: &Client, message: &Message, config: &Config) -> Result<()> {
+    /// Handle OPER command with full database access
+    pub async fn handle_oper(&self, client: &Client, message: &Message, config: &Config, context: &ModuleContext) -> Result<()> {
         if !self.config.enabled {
-            client.send_numeric(NumericReply::ErrUnknownCommand, &["OPER"])?;
+            let error_msg = rustircd_core::Message::new(
+                rustircd_core::MessageType::Error,
+                vec!["OPER command is disabled".to_string()]
+            );
+            let _ = client.send(error_msg);
             return Ok(());
         }
         
         if message.params.len() < 2 {
-            client.send_numeric(NumericReply::ErrNeedMoreParams, &["OPER", "Not enough parameters"])?;
+            let error_msg = NumericReply::need_more_params("OPER");
+            let _ = client.send(error_msg);
             return Ok(());
         }
         
         let oper_name = &message.params[0];
         let password = &message.params[1];
         
-        // Authenticate operator
-        if let Some(operator_config) = config.authenticate_operator(oper_name, password, 
-            client.username().as_deref().unwrap_or(""), 
-            &client.remote_addr) {
-            
-            // Set operator flags on the user using secure method
-            let mut operator_flags = HashSet::new();
-            for flag in &operator_config.flags {
-                operator_flags.insert(*flag);
-            }
-            
-            // Grant operator privileges (this will set the +o mode securely)
-            if let Some(user) = client.user.as_ref() {
-                // Note: In a real implementation, we would need mutable access to the user
-                // For now, we'll just log the successful authentication
+        // Get username and host from client
+        let username = client.username().unwrap_or_default();
+        let host = &client.remote_addr;
+        
+        // Authenticate operator against config
+        if let Some(operator_config) = config.authenticate_operator(oper_name, password, &username, host) {
+            // Get the user from the database
+            if let Some(mut user) = context.get_user_by_nick(oper_name) {
+                // Set operator flags on the user
+                let mut operator_flags = HashSet::new();
+                for flag in &operator_config.flags {
+                    operator_flags.insert(*flag);
+                }
+                
+                // Grant operator privileges (this will set the +o mode securely)
+                user.set_operator_flags(operator_flags.clone());
+                
+                // Update user in database
+                context.update_user(user.clone())?;
+                
                 info!("Operator {} successfully authenticated with flags: {:?}", 
-                      user.nickname(), operator_flags);
-            }
-            
-            // Send success message
-            client.send_numeric(NumericReply::RplYoureOper, &["You are now an IRC operator"])?;
-            
-            // Send operator privileges information
-            self.send_operator_privileges(client, &operator_flags).await;
-            
-            if self.config.log_operator_actions {
-                tracing::info!("User {} authenticated as operator with flags: {:?}", 
-                    oper_name, operator_flags);
+                      user.nick, operator_flags);
+                
+                // Send success message
+                let success_msg = NumericReply::youre_oper();
+                let _ = client.send(success_msg);
+                
+                // Send operator privileges information
+                self.send_operator_privileges(client, &operator_flags).await?;
+                
+                if self.config.log_operator_actions {
+                    tracing::info!("User {} authenticated as operator with flags: {:?}", 
+                        user.nick, operator_flags);
+                }
+            } else {
+                // User not found in database
+                let error_msg = NumericReply::password_mismatch();
+                let _ = client.send(error_msg);
+                
+                if self.config.log_operator_actions {
+                    tracing::warn!("Failed operator authentication - user not in database: {}", oper_name);
+                }
             }
         } else {
             // Authentication failed
@@ -97,7 +116,7 @@ impl OperModule {
             
             if self.config.log_operator_actions {
                 tracing::warn!("Failed operator authentication attempt for user {} from {}", 
-                    oper_name, client.remote_addr.clone());
+                    oper_name, host);
             }
         }
         
@@ -121,8 +140,12 @@ impl OperModule {
         }
         
         if !privileges.is_empty() {
-            let privileges_msg = NumericReply::RplYoureOper.reply("", vec![format!("{}", privileges.join(", "))]);
-            let _ = client.send(privileges_msg);
+            let msg = format!("Your operator privileges: {}", privileges.join(", "));
+            let notice = rustircd_core::Message::new(
+                rustircd_core::MessageType::Notice,
+                vec!["*".to_string(), msg]
+            );
+            let _ = client.send(notice);
         }
         
         Ok(())
@@ -412,17 +435,32 @@ impl rustircd_core::Module for OperModule {
         Ok(())
     }
     
-    async fn handle_message(&mut self, client: &rustircd_core::Client, message: &rustircd_core::Message, _context: &ModuleContext) -> Result<ModuleResult> {
+    async fn handle_message(&mut self, client: &rustircd_core::Client, message: &rustircd_core::Message, context: &ModuleContext) -> Result<ModuleResult> {
+        // Note: This is never called because handle_message_with_server is used
+        Ok(ModuleResult::NotHandled)
+    }
+    
+    async fn handle_message_with_server(&mut self, client: &rustircd_core::Client, message: &rustircd_core::Message, server: Option<&rustircd_core::Server>, context: &ModuleContext) -> Result<ModuleResult> {
         match message.command {
-            rustircd_core::MessageType::Custom(ref cmd) if cmd == "OPER" => {
-                // Create a default config for now - in production this should come from context
-                let config = rustircd_core::Config::default();
-                self.handle_oper(client, message, &config).await?;
+            rustircd_core::MessageType::Oper => {
+                // Get config from server if available
+                let config = if let Some(srv) = server {
+                    srv.config().clone()
+                } else {
+                    rustircd_core::Config::default()
+                };
+                
+                self.handle_oper(client, message, &config, context).await?;
                 Ok(ModuleResult::Handled)
             }
             rustircd_core::MessageType::Custom(ref cmd) if cmd == "DEOP" => {
-                // Create a default config for now - in production this should come from context
-                let config = rustircd_core::Config::default();
+                // Get config from server if available
+                let config = if let Some(srv) = server {
+                    srv.config().clone()
+                } else {
+                    rustircd_core::Config::default()
+                };
+                
                 self.handle_deop(client, message, &config).await?;
                 Ok(ModuleResult::Handled)
             }

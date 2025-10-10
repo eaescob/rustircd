@@ -164,16 +164,204 @@ links = [
 
 # Optional: IRC Operators (users with elevated privileges)
 # To generate a password hash: echo -n "your_password" | sha256sum
+# 
+# ============================================================================
+# OPERATOR FLAGS (Granular Permissions)
+# ============================================================================
+# Each operator can have one or more flags that grant specific privileges:
+#
+# - GlobalOper:      Full operator privileges network-wide
+#                    • Can KILL any user on any server
+#                    • Can perform all operator commands globally
+#                    • Highest privilege level
+#
+# - LocalOper:       Operator privileges limited to local server only
+#                    • Can KILL users on local server only
+#                    • Cannot affect remote servers or users
+#                    • Good for server-specific moderators
+#
+# - RemoteConnect:   Can use /CONNECT to link remote servers
+#                    • Can establish server-to-server connections
+#                    • Required for network topology management
+#                    • Use for hub administrators
+#
+# - LocalConnect:    Can use /CONNECT to link local servers only
+#                    • Limited to connecting from this server
+#                    • Cannot manage remote server connections
+#
+# - Administrator:   Enhanced administrative privileges
+#                    • Can see secret channels in /WHOIS
+#                    • Access to additional server information
+#                    • Use for senior staff members
+#
+# - Spy:             Notified when users /WHOIS them
+#                    • Receives alerts when someone queries their info
+#                    • Privacy/security feature for high-profile opers
+#
+# - Squit:           Can use /SQUIT to disconnect servers
+#                    • Can forcibly remove servers from the network
+#                    • Powerful command - use with caution
+#                    • Required for emergency network splits
+#
+# ============================================================================
+# OPERATOR TEMPLATES
+# ============================================================================
+
 operators = [
-    # Example operator (commented out):
+    # --------------------------------------------------------------------
+    # TEMPLATE 1: Network Administrator (Full Privileges)
+    # --------------------------------------------------------------------
+    # Use this for head administrators who need complete network control
     # { 
-    #   nickname = "admin",                                                         # Operator nickname
-    #   password_hash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",  # SHA256 hash of "password"
-    #   hostmask = "*@*",                                                          # Allowed hostmask pattern
-    #   flags = ["GlobalOper", "Administrator"],                                   # Operator privileges
-    #   enabled = true                                                             # Enable this operator
+    #   nickname = "netadmin",
+    #   password_hash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",  # SHA256: "password"
+    #   hostmask = "*@*.admin.example.com",                    # Restrict to admin hosts
+    #   flags = ["GlobalOper", "RemoteConnect", "Administrator", "Squit", "Spy"],
+    #   enabled = true
+    # },
+    #
+    # Permissions:
+    # ✓ Kill any user network-wide
+    # ✓ Connect/disconnect servers
+    # ✓ See all channels in WHOIS
+    # ✓ SQUIT servers
+    # ✓ Receive WHOIS notifications
+
+    # --------------------------------------------------------------------
+    # TEMPLATE 2: Local Server Administrator
+    # --------------------------------------------------------------------
+    # Use this for server administrators who manage a single server
+    # { 
+    #   nickname = "serveradmin",
+    #   password_hash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
+    #   hostmask = "*@localhost",                              # Local connections only
+    #   flags = ["LocalOper", "LocalConnect", "Administrator"],
+    #   enabled = true
+    # },
+    #
+    # Permissions:
+    # ✓ Kill users on local server only
+    # ✓ Connect servers from this server
+    # ✓ See all channels in WHOIS
+    # ✗ Cannot kill remote users
+    # ✗ Cannot SQUIT servers
+    # ✗ Cannot manage remote server connections
+
+    # --------------------------------------------------------------------
+    # TEMPLATE 3: Hub Administrator (Server Linking)
+    # --------------------------------------------------------------------
+    # Use this for operators who manage server topology
+    # { 
+    #   nickname = "hubadmin",
+    #   password_hash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
+    #   hostmask = "*@*.hubs.example.com",
+    #   flags = ["LocalOper", "RemoteConnect", "Squit"],
+    #   enabled = true
+    # },
+    #
+    # Permissions:
+    # ✓ Connect/disconnect servers
+    # ✓ SQUIT servers (emergency splits)
+    # ✓ Kill local users
+    # ✗ Cannot kill remote users
+    # ✗ No enhanced administrative info
+
+    # --------------------------------------------------------------------
+    # TEMPLATE 4: Global Moderator (User Management)
+    # --------------------------------------------------------------------
+    # Use this for moderators who enforce rules network-wide
+    # { 
+    #   nickname = "globalmod",
+    #   password_hash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
+    #   hostmask = "*@*.staff.example.com",
+    #   flags = ["GlobalOper"],                                # Only kill permission
+    #   enabled = true
+    # },
+    #
+    # Permissions:
+    # ✓ Kill any user network-wide
+    # ✗ Cannot manage servers
+    # ✗ No enhanced administrative info
+    # ✗ Cannot SQUIT
+
+    # --------------------------------------------------------------------
+    # TEMPLATE 5: Local Moderator (Server-Specific)
+    # --------------------------------------------------------------------
+    # Use this for moderators limited to one server
+    # { 
+    #   nickname = "localmod",
+    #   password_hash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
+    #   hostmask = "*@*.example.com",
+    #   flags = ["LocalOper"],                                 # Local kill only
+    #   enabled = true
+    # },
+    #
+    # Permissions:
+    # ✓ Kill users on local server only
+    # ✗ Cannot kill remote users
+    # ✗ Cannot manage servers
+    # ✗ No enhanced privileges
+
+    # --------------------------------------------------------------------
+    # TEMPLATE 6: Services Administrator (Special)
+    # --------------------------------------------------------------------
+    # Use this for operators who manage services integration
+    # { 
+    #   nickname = "servicesadmin",
+    #   password_hash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
+    #   hostmask = "services@services.example.com",
+    #   flags = ["Administrator", "Spy"],                      # Info access only
+    #   enabled = true
+    # },
+    #
+    # Permissions:
+    # ✓ See all channels in WHOIS
+    # ✓ Receive WHOIS notifications
+    # ✗ Cannot kill users
+    # ✗ Cannot manage servers
+
+    # --------------------------------------------------------------------
+    # EXAMPLE: Active Operator (For Testing)
+    # --------------------------------------------------------------------
+    # Uncomment to create a test operator account
+    # { 
+    #   nickname = "admin",
+    #   password_hash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",  # SHA256: "password"
+    #   hostmask = "*@*",                                      # WARNING: Allows any host!
+    #   flags = ["GlobalOper", "Administrator", "RemoteConnect", "Squit"],
+    #   enabled = true
     # },
 ]
+
+# ============================================================================
+# SECURITY RECOMMENDATIONS FOR OPERATORS
+# ============================================================================
+# 
+# 1. HOSTMASKS: Always use restrictive hostmasks!
+#    Good: "admin@*.admin.example.com" or "admin@203.0.113.0"
+#    Bad:  "*@*" (allows anyone from any host)
+#
+# 2. PASSWORD HASHES: Never store plain text passwords
+#    Generate with: echo -n "your_secure_password" | sha256sum
+#
+# 3. LEAST PRIVILEGE: Only grant flags that are actually needed
+#    Don't give GlobalOper to everyone - use LocalOper when possible
+#
+# 4. FLAG COMBINATIONS:
+#    Common safe combinations:
+#    - ["LocalOper"] - Basic moderator
+#    - ["LocalOper", "Administrator"] - Server admin
+#    - ["GlobalOper", "RemoteConnect", "Administrator"] - Network admin
+#    - ["GlobalOper", "RemoteConnect", "Administrator", "Squit"] - Full admin
+#
+#    Dangerous combinations (use with caution):
+#    - ["Squit"] alone - Can split network but not reconnect
+#    - ["RemoteConnect", "Squit"] without Oper - Can manage topology but not users
+#
+# 5. AUDIT LOGGING: Enable logging for all operator actions
+#    Monitor OPER, KILL, SQUIT, CONNECT commands
+#
+# ============================================================================
 
 # Optional: Super servers (services servers with special privileges)
 super_servers = [

@@ -1262,32 +1262,6 @@ impl Server {
         Ok(())
     }
     
-    /// Handle SQUIT command (server quit)
-    async fn handle_squit(&self, _server_name: &str, message: Message) -> Result<()> {
-        if message.params.is_empty() {
-            return Err(Error::MessageParse("SQUIT requires a server name parameter".to_string()));
-        }
-        
-        let target_server = &message.params[0];
-        let reason = message.params.get(1).map(|s| s.as_str()).unwrap_or("Server quit");
-        
-        tracing::info!("SQUIT command received for server {}: {}", target_server, reason);
-        
-        // Remove the server connection
-        if let Some(_connection) = self.server_connections.remove_connection(target_server).await? {
-            tracing::info!("Removed server connection: {}", target_server);
-            
-            // Propagate SQUIT to other servers
-            let squit_propagation = Message::new(
-                MessageType::ServerQuit,
-                vec![target_server.to_string(), reason.to_string()]
-            );
-            self.propagate_to_servers(squit_propagation).await?;
-        }
-        
-        Ok(())
-    }
-    
     /// Handle NICK propagation from other servers
     async fn handle_server_nick_propagation(&self, server_name: &str, message: Message) -> Result<()> {
         if message.params.len() < 2 {
@@ -3755,21 +3729,19 @@ impl Server {
             return Ok(());
         }
 
-        // Send SQUIT to the target server and propagate to others
-        let squit_message = Message::new(
+        // Send notice to all operators about the SQUIT
+        self.send_operator_notice(&format!("SQUIT: {} disconnecting server {}: {}", user.nick, target_server, reason)).await?;
+        
+        tracing::info!("Operator {} issued SQUIT for server {}: {}", user.nick, target_server, reason);
+        
+        // Trigger full server quit processing with cleanup
+        // This will handle user cleanup, database cleanup, propagation, etc.
+        let quit_message = Message::new(
             MessageType::ServerQuit,
             vec![target_server.to_string(), reason.to_string()]
         );
+        self.handle_server_quit(target_server, quit_message).await?;
         
-        self.propagate_to_servers(squit_message).await?;
-        
-        // Remove the server connection locally
-        self.server_connections.remove_connection(target_server).await?;
-        
-        // Send notice to all operators about the SQUIT
-        self.send_operator_notice(&format!("SQUIT: {} disconnected server {}: {}", user.nick, target_server, reason)).await?;
-        
-        tracing::info!("Operator {} issued SQUIT for server {}: {}", user.nick, target_server, reason);
         Ok(())
     }
 

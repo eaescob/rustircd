@@ -1,0 +1,183 @@
+# Example configuration for SQUIT command testing
+# This configuration includes an operator with SQUIT privileges
+
+[server]
+name = "irc.example.com"
+description = "Example IRC Server with SQUIT"
+version = "1.0.0"
+created = "2025-01-09"
+max_clients = 1000
+max_channels_per_client = 50
+max_channel_name_length = 50
+max_nickname_length = 30
+max_topic_length = 307
+max_away_length = 200
+max_kick_length = 200
+max_quit_length = 200
+admin_email = "admin@example.com"
+admin_location1 = "Example City"
+admin_location2 = "Example Country"
+show_server_details_in_stats = true
+motd_file = "motd.txt"
+
+[network]
+name = "ExampleNet"
+description = "Example IRC Network"
+
+# ============================================================================
+# OPERATOR EXAMPLES FOR SQUIT TESTING
+# ============================================================================
+# This configuration demonstrates granular SQUIT permissions.
+# 
+# SQUIT FLAG: Allows operator to disconnect servers from the network
+# - Powerful command - use with extreme caution
+# - Can cause network splits and disconnections
+# - Should only be granted to senior network administrators
+# - Useful for emergency situations and maintenance
+#
+# Available Operator Flags:
+#   GlobalOper      - Full operator privileges network-wide
+#   LocalOper       - Operator privileges on local server only
+#   RemoteConnect   - Can connect remote servers
+#   LocalConnect    - Can connect local servers
+#   Administrator   - Enhanced privileges (see secret channels)
+#   Spy             - Notified when someone does WHOIS on them
+#   Squit           - Can disconnect servers (THIS FLAG)
+# ============================================================================
+
+# Network Administrator with SQUIT privilege (full permissions)
+[[network.operators]]
+nickname = "admin"
+password_hash = "$argon2id$v=19$m=19456,t=2,p=1$Yh3OzZ0l6xKP0gCQWmVSKQ$vJGPZ5WQJA7TpLKUgKkrYPLYFJFGM5T1Z+n1VYw0kJ0"  # Password: admin123
+hostmask = "*@*"
+flags = ["GlobalOper", "Squit", "RemoteConnect", "Administrator"]
+enabled = true
+# Can do: KILL (global), SQUIT, CONNECT (remote), see secret channels
+# Use for: Head network administrators
+
+# Hub Administrator with SQUIT privilege (server management only)
+[[network.operators]]
+nickname = "hubadmin"
+password_hash = "$argon2id$v=19$m=19456,t=2,p=1$Yh3OzZ0l6xKP0gCQWmVSKQ$vJGPZ5WQJA7TpLKUgKkrYPLYFJFGM5T1Z+n1VYw0kJ0"  # Password: admin123
+hostmask = "*@*.hubs.example.com"
+flags = ["LocalOper", "RemoteConnect", "Squit"]
+enabled = true
+# Can do: KILL (local only), SQUIT, CONNECT (remote)
+# Use for: Hub server administrators who manage topology
+
+# Local Server Administrator WITHOUT SQUIT (for comparison)
+[[network.operators]]
+nickname = "serveradmin"
+password_hash = "$argon2id$v=19$m=19456,t=2,p=1$Yh3OzZ0l6xKP0gCQWmVSKQ$vJGPZ5WQJA7TpLKUgKkrYPLYFJFGM5T1Z+n1VYw0kJ0"  # Password: admin123
+hostmask = "*@localhost"
+flags = ["LocalOper", "LocalConnect", "Administrator"]
+enabled = true
+# Can do: KILL (local only), CONNECT (local only), see secret channels
+# Cannot do: SQUIT (will receive ERR_NOPRIVILEGES)
+# Use for: Server-specific administrators
+
+# Global Moderator WITHOUT SQUIT (for comparison)
+[[network.operators]]
+nickname = "globalmod"
+password_hash = "$argon2id$v=19$m=19456,t=2,p=1$Yh3OzZ0l6xKP0gCQWmVSKQ$vJGPZ5WQJA7TpLKUgKkrYPLYFJFGM5T1Z+n1VYw0kJ0"  # Password: admin123
+hostmask = "*@*.staff.example.com"
+flags = ["GlobalOper"]
+enabled = true
+# Can do: KILL (global)
+# Cannot do: SQUIT, CONNECT (will receive ERR_NOPRIVILEGES)
+# Use for: Network moderators who only need user management
+
+# Local Moderator WITHOUT SQUIT (for comparison)
+[[network.operators]]
+nickname = "localmod"
+password_hash = "$argon2id$v=19$m=19456,t=2,p=1$Yh3OzZ0l6xKP0gCQWmVSKQ$vJGPZ5WQJA7TpLKUgKkrYPLYFJFGM5T1Z+n1VYw0kJ0"  # Password: admin123
+hostmask = "*@*.example.com"
+flags = ["LocalOper"]
+enabled = true
+# Can do: KILL (local only)
+# Cannot do: SQUIT, CONNECT, anything network-wide
+# Use for: Local server moderators
+
+# ============================================================================
+# TESTING SQUIT COMMAND
+# ============================================================================
+# To test SQUIT with different permission levels:
+#
+# 1. Connect to server: telnet localhost 6667
+# 2. Register: NICK test / USER test 0 * :Test User
+# 3. Authenticate as one of the operators above:
+#    OPER admin admin123      (has SQUIT - will succeed)
+#    OPER hubadmin admin123   (has SQUIT - will succeed)
+#    OPER serveradmin admin123 (no SQUIT - will fail)
+#    OPER globalmod admin123  (no SQUIT - will fail)
+#    OPER localmod admin123   (no SQUIT - will fail)
+# 4. Try SQUIT: SQUIT remote.server.com :Maintenance
+#
+# Expected results:
+# - admin, hubadmin: SQUIT succeeds, server disconnected, users cleaned up
+# - serveradmin, globalmod, localmod: ERR_NOPRIVILEGES (481)
+# ============================================================================
+
+# Server links for testing SQUIT
+[[network.links]]
+name = "remote.server.com"
+hostname = "192.168.1.100"
+port = 6667
+password = "serverpass"
+tls = false
+outgoing = true
+
+[[network.links]]
+name = "hub.server.com"
+hostname = "192.168.1.101"
+port = 6667
+password = "serverpass"
+tls = false
+outgoing = true
+
+[connection]
+bind_address = "0.0.0.0"
+port = 6667
+max_connections_per_ip = 10
+connection_timeout = 300
+ping_frequency = 120
+idle_timeout = 600
+enable_dns_lookup = true
+enable_ident_lookup = true
+
+# Connection class for default users
+[[classes]]
+name = "default"
+max_clients = 100
+max_sendq = 1048576      # 1MB
+max_recvq = 8192         # 8KB
+ping_frequency = 120
+connection_timeout = 300
+throttle_enabled = true
+
+[security]
+password_required = false
+require_email_validation = false
+
+[modules]
+enabled = ["channel", "oper", "admin"]
+
+[database]
+cache_size = 10000
+
+[broadcast]
+max_queue_size = 10000
+priority_queue_size = 1000
+worker_threads = 4
+
+[services]
+
+[netsplit]
+auto_reconnect = true
+reconnect_delay = 30
+max_reconnect_delay = 1800
+split_user_grace_period = 60
+notify_opers_on_split = true
+notify_on_rejoin = true
+burst_optimization_window = 300
+

@@ -4,9 +4,7 @@
 //! The rehash command allows operators to reload various parts of the server configuration
 //! without restarting the server.
 
-use rustircd_core::{Config, Server, RehashService};
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use rustircd_core::{Config, Server};
 use tracing::{info, error};
 
 #[tokio::main]

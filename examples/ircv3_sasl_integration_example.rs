@@ -4,7 +4,6 @@
 
 use rustircd_core::{Client, Message, MessageType, Result, Module};
 use rustircd_modules::ircv3::Ircv3Module;
-use std::collections::HashMap;
 use uuid::Uuid;
 use tokio::sync::mpsc;
 

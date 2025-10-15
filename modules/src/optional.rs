@@ -242,7 +242,7 @@ impl OptionalModule {
         // 2. Check if user is currently connected and registered
         // 3. Return list of online nicknames
         
-        let mut online_nicks: Vec<String> = Vec::new();
+        let online_nicks: Vec<String> = Vec::new();
         
         for nick in nicks {
             // In production, would check:
@@ -323,7 +323,7 @@ impl OptionalModule {
         // 2. Get user's hostname, username, and operator status
         // 3. Return formatted userhost information
         
-        let mut userhost_info: Vec<String> = Vec::new();
+        let userhost_info: Vec<String> = Vec::new();
         
         for nick in nicks {
             // In production, would check:

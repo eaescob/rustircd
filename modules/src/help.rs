@@ -9,7 +9,7 @@ use rustircd_core::{
     module::{ModuleResult, ModuleStatsResponse, ModuleContext},
     define_module_numerics
 };
-use tracing::{debug, info, warn};
+use tracing::info;
 use std::collections::HashMap;
 use std::sync::Arc;
 

@@ -4,14 +4,14 @@
 //! Based on Ratbox's ban management modules.
 
 use rustircd_core::{
-    async_trait, Client, Error, Message, MessageType, Module, ModuleManager,
+    async_trait, Client, Error, Message, MessageType, Module,
     ModuleNumericManager, module::{ModuleResult, ModuleStatsResponse, ModuleContext},
     NumericReply, Result, User
 };
 use tracing::{debug, info, warn};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::time::{SystemTime, UNIX_EPOCH};
 use crate::help::{HelpProvider, HelpTopic};
 
 /// XLINE module for extended line management

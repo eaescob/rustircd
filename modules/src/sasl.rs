@@ -3,7 +3,7 @@
 //! This module provides SASL authentication support as per IRCv3 specification.
 //! It supports various SASL mechanisms including PLAIN, EXTERNAL, and SCRAM-SHA-256.
 
-use rustircd_core::{User, Message, Client, Result, Error, NumericReply, Config, MessageType, ModuleNumericManager, module::{ModuleContext, ModuleResult, ModuleStatsResponse}};
+use rustircd_core::{Message, Client, Result, Error, NumericReply, MessageType, ModuleNumericManager, module::{ModuleContext, ModuleResult, ModuleStatsResponse}};
 use std::collections::HashMap;
 use uuid::Uuid;
 use async_trait::async_trait;

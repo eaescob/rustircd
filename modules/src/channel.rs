@@ -3,7 +3,7 @@
 use rustircd_core::{
     Module, module::ModuleResult, Client, Message, User, Error, Result,
     MessageType, Prefix, BroadcastSystem, BroadcastTarget, BroadcastPriority,
-    BroadcastMessage, Database, ChannelInfo, module::ModuleContext
+    BroadcastMessage, Database, module::ModuleContext
 };
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};

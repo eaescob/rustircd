@@ -2,7 +2,7 @@
 //! 
 //! This module provides SASL authentication integration with IRCv3 capability negotiation.
 
-use rustircd_core::{Client, Message, Error, Result};
+use rustircd_core::{Client, Message, Result};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;

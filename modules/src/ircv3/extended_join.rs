@@ -3,7 +3,7 @@
 //! This module implements the extended-join capability which allows JOIN messages
 //! to include the account name and real name of the joining user.
 
-use rustircd_core::{Client, Message, Error, Result, module::ModuleContext};
+use rustircd_core::{Client, Message, Result, module::ModuleContext};
 use std::collections::HashMap;
 
 /// Extended Join handler

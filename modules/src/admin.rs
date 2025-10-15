@@ -4,12 +4,11 @@
 //! Based on Ratbox's administrative modules.
 
 use rustircd_core::{
-    async_trait, Client, Message, MessageType, Module, ModuleManager,
+    async_trait, Client, Message, MessageType, Module,
     ModuleNumericManager, module::{ModuleResult, ModuleStatsResponse, ModuleContext},
     NumericReply, Result, User
 };
-use tracing::{debug, info, warn, error};
-use std::collections::HashMap;
+use tracing::{info, error};
 use tokio::sync::RwLock;
 
 /// Administrative module for server administration

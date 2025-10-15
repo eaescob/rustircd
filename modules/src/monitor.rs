@@ -4,8 +4,7 @@
 //! Based on Ratbox's m_monitor.c module.
 
 use rustircd_core::{
-    async_trait, Client, Message, MessageType, Module, 
-    NumericReply, Result, User, ModuleNumericManager, ModuleNumericClient,
+    async_trait, Client, Message, MessageType, Module, Result, User, ModuleNumericManager, ModuleNumericClient,
     define_module_numerics,
 };
 use rustircd_core::module::{ModuleResult, ModuleContext};

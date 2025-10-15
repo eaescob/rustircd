@@ -3,7 +3,7 @@
 //! This module implements the multi-prefix capability which allows NAMES messages
 //! to show multiple prefixes for users who have multiple channel modes.
 
-use rustircd_core::{Client, Message, Error, Result};
+use rustircd_core::{Client, Message, Result};
 use std::collections::HashMap;
 
 /// Multi-Prefix handler

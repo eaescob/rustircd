@@ -4,11 +4,11 @@
 //! Based on Ratbox's m_services.c module.
 
 use rustircd_core::{
-    async_trait, Client, Error, Message, MessageType, Module, ModuleManager,
+    async_trait, Client, Message, MessageType, Module,
     ModuleNumericManager, module::{ModuleResult, ModuleStatsResponse, ModuleContext},
     NumericReply, Result, User
 };
-use tracing::{debug, info, warn};
+use tracing::info;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 

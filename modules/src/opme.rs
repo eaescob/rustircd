@@ -7,7 +7,6 @@
 //! Based on: https://github.com/solanum-ircd/solanum/blob/main/extensions/m_opme.c
 
 use rustircd_core::{User, Message, Client, Result, Error, NumericReply, Config, ModuleNumericManager, module::{ModuleContext, ModuleResult, ModuleStatsResponse}};
-use std::collections::HashSet;
 use uuid::Uuid;
 use async_trait::async_trait;
 

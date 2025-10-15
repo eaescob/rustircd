@@ -6,9 +6,8 @@
 //! 3. Show mode validation and permissions
 //! 4. Display user mode responses
 
-use rustircd_core::{Config, Server, Result, Message, MessageType, NumericReply, UserMode, UserModeManager};
+use rustircd_core::{Config, Server, Result, Message, MessageType, UserMode, UserModeManager};
 use tokio::time::{sleep, Duration};
-use std::collections::HashSet;
 
 #[tokio::main]
 async fn main() -> Result<()> {

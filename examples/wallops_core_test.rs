@@ -3,10 +3,7 @@
 //! This example demonstrates the core server WALLOPs implementation
 //! with server-to-server broadcasting.
 
-use rustircd_core::{Server, Config, Message, MessageType, User, UserMode};
-use std::collections::HashMap;
-use tokio::sync::mpsc;
-use uuid::Uuid;
+use rustircd_core::{Server, Config, Message, MessageType};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

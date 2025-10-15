@@ -2,10 +2,8 @@
 //! 
 //! Allows modules to define their own numeric replies without cluttering the core numeric.rs file.
 
-use crate::{Message, NumericReply};
+use crate::Message;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// A module-specific numeric reply
 #[derive(Debug, Clone)]

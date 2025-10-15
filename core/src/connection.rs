@@ -17,6 +17,7 @@ pub struct ConnectionHandler {
     /// Nickname to client ID mapping
     nick_to_id: std::collections::HashMap<String, Uuid>,
     /// Message receiver for incoming messages
+    #[allow(dead_code)]
     message_receiver: mpsc::UnboundedReceiver<(Uuid, Message)>,
     /// Message sender for outgoing messages
     message_sender: mpsc::UnboundedSender<(Uuid, Message)>,

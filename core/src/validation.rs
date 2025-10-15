@@ -3,7 +3,7 @@
 //! This module provides detailed validation of all configuration settings,
 //! including cross-references, file paths, and network configuration.
 
-use crate::{Config, Error, Result};
+use crate::Config;
 use std::path::Path;
 use std::collections::HashSet;
 

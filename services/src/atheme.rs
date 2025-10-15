@@ -125,6 +125,7 @@ pub struct AthemeStats {
 /// Atheme protocol handler
 pub struct AthemeProtocol {
     /// Integration instance
+    #[allow(dead_code)]
     integration: Arc<AthemeIntegration>,
 }
 
@@ -238,6 +239,7 @@ impl AthemeIntegration {
         // For now, just return success
         Ok(())
     }
+    #[allow(dead_code)]
     
     /// Handle messages from Atheme
     async fn handle_messages(&self, mut stream: TcpStream) -> Result<()> {

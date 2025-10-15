@@ -716,7 +716,7 @@ impl HelpModule {
     }
 
     /// Send module information
-    async fn send_module_info(&self, client: &Client, user: &User) -> Result<()> {
+    async fn send_module_info(&self, client: &Client, _user: &User) -> Result<()> {
         self.send_module_numeric(client, "RPL_HELPSTART", &["MODULES", "Loaded modules and their commands"])?;
         
         if let Some(module_manager) = &self.module_manager {

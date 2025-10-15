@@ -174,7 +174,7 @@ impl GlineModule {
     }
     
     /// List GLINEs
-    async fn list_glines(&self, client: &Client, user: &User) -> Result<()> {
+    async fn list_glines(&self, client: &Client, _user: &User) -> Result<()> {
         let glines = self.glines.read().await;
         
         if glines.is_empty() {
@@ -243,9 +243,9 @@ impl GlineModule {
     
     /// Format time as readable string
     fn format_time(&self, timestamp: u64) -> String {
-        use chrono::{DateTime, Utc, NaiveDateTime};
-        let naive = NaiveDateTime::from_timestamp_opt(timestamp as i64, 0).unwrap_or_default();
-        let datetime: DateTime<Utc> = DateTime::from_utc(naive, Utc);
+        use chrono::{DateTime, Utc};
+        let naive = DateTime::from_timestamp(timestamp as i64, 0).unwrap_or_default().naive_utc();
+        let datetime: DateTime<Utc> = DateTime::from_naive_utc_and_offset(naive, Utc);
         datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string()
     }
     

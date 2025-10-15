@@ -41,6 +41,7 @@ pub struct Server {
     /// Network query manager
     network_query_manager: Arc<NetworkQueryManager>,
     /// Network message handler
+    #[allow(dead_code)]
     network_message_handler: Arc<NetworkMessageHandler>,
     /// Server connection manager
     server_connections: Arc<ServerConnectionManager>,
@@ -57,11 +58,13 @@ pub struct Server {
     /// TLS acceptor (if enabled)
     tls_acceptor: Option<TlsAcceptor>,
     /// Replies configuration
+    #[allow(dead_code)]
     replies_config: Option<crate::RepliesConfig>,
 }
 
 impl Server {
     /// Create a numeric reply using configurable replies if available
+    #[allow(dead_code)]
     fn create_numeric_reply(&self, reply: NumericReply, target: &str, params: Vec<String>) -> Message {
         if let Some(ref replies_config) = self.replies_config {
             let mut param_map = std::collections::HashMap::new();
@@ -1899,7 +1902,7 @@ impl Server {
         
         // Check if this is a nickname change or initial registration
         let connection_handler = self.connection_handler.read().await;
-        let old_nick = if let Some(client) = connection_handler.get_client(&client_id) {
+        let _old_nick = if let Some(client) = connection_handler.get_client(&client_id) {
             client.user.as_ref().map(|u| u.nick.clone())
         } else {
             None

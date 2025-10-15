@@ -10,6 +10,7 @@ use tracing::{info, warn};
 pub struct RehashService {
     /// Current configuration
     config: Arc<RwLock<Config>>,
+    #[allow(dead_code)]
     /// MOTD manager
     motd_manager: Arc<MotdManager>,
     /// Configuration file path
@@ -120,7 +121,7 @@ impl RehashService {
         } else {
             warn!("No MOTD file configured, clearing MOTD");
             // Create empty MOTD manager
-            let new_motd_manager = MotdManager::new();
+            let _new_motd_manager = MotdManager::new();
             info!("MOTD cleared successfully");
         }
         

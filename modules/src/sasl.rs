@@ -139,6 +139,7 @@ pub enum SaslResponseType {
 /// PLAIN SASL mechanism
 pub struct PlainMechanism {
     /// Service name
+    #[allow(dead_code)]
     service_name: String,
 }
 
@@ -238,6 +239,7 @@ impl SaslMechanism for PlainMechanism {
 
 /// EXTERNAL SASL mechanism
 pub struct ExternalMechanism {
+    #[allow(dead_code)]
     /// Service name
     service_name: String,
 }
@@ -606,6 +608,7 @@ impl rustircd_core::Module for SaslModule {
     }
 }
 
+    #[allow(dead_code)]
 /// SASL capability extension
 pub struct SaslCapabilityExtension {
     sasl_module: SaslModule,

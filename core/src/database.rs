@@ -61,6 +61,7 @@ pub struct Database {
     /// Cache for channel member lists (channel -> member nicknames)
     channel_member_cache: Arc<ChannelMemberCache>,
     /// Configuration
+    #[allow(dead_code)]
     max_history_size: usize,
     history_retention_days: i64,
 }
@@ -382,6 +383,7 @@ impl Database {
 
     // User history management
 
+    #[allow(dead_code)]
     /// Add user to history
     async fn add_to_history(&self, user: User) -> Result<()> {
         let entry = UserHistoryEntry {

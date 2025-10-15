@@ -24,6 +24,7 @@ pub struct Ircv3Module {
     name: String,
     version: String,
     description: String,
+    #[allow(dead_code)]
     capabilities: HashSet<String>,
     capability_negotiation: capability_negotiation::CapabilityNegotiation,
     message_tags: message_tags::MessageTags,

@@ -4,8 +4,6 @@
 //! messaging modules loaded from configuration files.
 
 use rustircd_core::{Server, Config};
-use rustircd_modules::messaging::create_messaging_module_with_config;
-use tokio::time::{sleep, Duration};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

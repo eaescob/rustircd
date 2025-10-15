@@ -8,7 +8,6 @@
 
 use rustircd_core::{Config, Server, Result};
 use std::fs;
-use std::path::Path;
 use tokio::time::{sleep, Duration};
 
 #[tokio::main]

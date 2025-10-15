@@ -5,11 +5,8 @@
 //! - Only users with +g mode receive GLOBOPS messages
 //! - GLOBOPS messages are sent to all users with the +g mode set
 
-use rustircd_core::{Server, Config, Client, User};
-use rustircd_modules::messaging::{MessagingWrapper, create_default_messaging_module};
-use std::collections::HashSet;
+use rustircd_core::{Server, Config, User};
 use tokio::time::{sleep, Duration};
-use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

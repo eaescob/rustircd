@@ -3,7 +3,7 @@
 //! This module provides integration with Atheme services package,
 //! implementing the Charybdis protocol for seamless communication.
 
-use rustircd_core::{User, Message, Client, Result, Error, Config, MessageType};
+use rustircd_core::{User, Message, Client, Result, Error, Config, MessageType, AuthProvider, AuthResult, AuthInfo, AuthRequest, AuthProviderCapabilities, Prefix};
 use rustircd_core::config::ServiceDefinition;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -13,6 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::framework::{Service, ServiceResult, ServiceContext};
+use base64::{Engine as _, engine::general_purpose};
 
 /// Atheme services integration module
 pub struct AthemeIntegration {
@@ -26,6 +27,10 @@ pub struct AthemeIntegration {
     stats: Arc<RwLock<AthemeStats>>,
     /// Current connection stream (for sending messages back)
     connection_stream: Arc<RwLock<Option<TcpStream>>>,
+    /// Pending SASL authentication requests
+    sasl_requests: Arc<RwLock<HashMap<Uuid, SaslAuthRequest>>>,
+    /// SASL authentication statistics
+    sasl_stats: Arc<RwLock<AthemeSaslStats>>,
 }
 
 /// Configuration for Atheme integration
@@ -122,6 +127,47 @@ pub struct AthemeStats {
     pub last_disconnection: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// SASL authentication request tracking
+#[derive(Debug, Clone)]
+struct SaslAuthRequest {
+    /// Original authentication request
+    request: AuthRequest,
+    /// SASL mechanism
+    mechanism: String,
+    /// Current step in SASL process
+    step: SaslStep,
+    /// Timeout timestamp
+    timeout_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// SASL authentication steps
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SaslStep {
+    /// Initial authentication request sent to Atheme
+    Initial,
+    /// Waiting for challenge from Atheme
+    WaitingForChallenge,
+    /// Challenge sent to client, waiting for response
+    WaitingForResponse,
+    /// Final authentication result
+    Completed,
+}
+
+/// Atheme SASL statistics
+#[derive(Debug, Default)]
+struct AthemeSaslStats {
+    /// Successful SASL authentications
+    successful: u64,
+    /// Failed SASL authentications
+    failed: u64,
+    /// SASL timeout errors
+    timeouts: u64,
+    /// SASL protocol errors
+    protocol_errors: u64,
+    /// Pending SASL requests
+    pending_requests: u64,
+}
+
 /// Atheme protocol handler
 pub struct AthemeProtocol {
     /// Integration instance
@@ -138,6 +184,8 @@ impl AthemeIntegration {
             connections: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(RwLock::new(AthemeStats::default())),
             connection_stream: Arc::new(RwLock::new(None)),
+            sasl_requests: Arc::new(RwLock::new(HashMap::new())),
+            sasl_stats: Arc::new(RwLock::new(AthemeSaslStats::default())),
         }
     }
     
@@ -935,6 +983,204 @@ impl AthemeIntegration {
         
         Ok(())
     }
+    
+    /// Authenticate user via Atheme SASL
+    pub async fn authenticate_sasl(&self, request: &AuthRequest) -> Result<AuthResult> {
+        // Check if Atheme is connected and authenticated
+        if !self.is_connected().await {
+            return Ok(AuthResult::Failure("Atheme services not available".to_string()));
+        }
+        
+        tracing::info!("Authenticating user '{}' via Atheme SASL", request.username);
+        
+        // Create SASL authentication request tracking
+        let client_id = request.client_info.id;
+        let mechanism = "PLAIN"; // For now, we'll use PLAIN mechanism
+        
+        let sasl_request = SaslAuthRequest {
+            request: request.clone(),
+            mechanism: mechanism.to_string(),
+            step: SaslStep::Initial,
+            timeout_at: chrono::Utc::now() + chrono::Duration::seconds(30), // 30 second timeout
+        };
+        
+        // Store pending request
+        {
+            let mut pending = self.sasl_requests.write().await;
+            pending.insert(client_id, sasl_request);
+        }
+        
+        // Send SASL authentication request to Atheme
+        self.send_sasl_request_to_atheme(client_id, request, mechanism).await?;
+        
+        // Update statistics
+        {
+            let mut stats = self.sasl_stats.write().await;
+            stats.pending_requests += 1;
+        }
+        
+        // For SASL, we need to return InProgress and handle the response asynchronously
+        Ok(AuthResult::InProgress)
+    }
+    
+    /// Send SASL authentication request to Atheme
+    async fn send_sasl_request_to_atheme(&self, client_id: Uuid, request: &AuthRequest, mechanism: &str) -> Result<()> {
+        // Create SASL message for Atheme
+        // Format: SASL <server> <uid> <mechanism> <data>
+        // This follows the protocol used by Solanum and other IRCv3 servers
+        
+        let uid = client_id.to_string();
+        let data = match mechanism {
+            "PLAIN" => {
+                // For PLAIN mechanism, encode credentials as base64
+                let auth_string = format!("{}\0{}\0{}", 
+                    request.authzid.as_deref().unwrap_or(""),
+                    request.username,
+                    request.credential
+                );
+                general_purpose::STANDARD.encode(auth_string.as_bytes())
+            }
+            "EXTERNAL" => {
+                // For EXTERNAL mechanism, use client certificate info
+                "".to_string()
+            }
+            _ => {
+                return Err(Error::Auth(format!("Unsupported SASL mechanism: {}", mechanism)));
+            }
+        };
+        
+        let sasl_message = Message::with_prefix(
+            Prefix::Server(self.config.service_name.clone()),
+            MessageType::Custom("SASL".to_string()),
+            vec![
+                "rustircd".to_string(), // Server name
+                uid.clone(),
+                mechanism.to_string(),
+                data,
+            ]
+        );
+        
+        // Send message to Atheme
+        self.send_message(&sasl_message).await?;
+        
+        tracing::debug!("Sent SASL request to Atheme for user {} (UID: {})", request.username, uid);
+        
+        Ok(())
+    }
+    
+    /// Handle SASL response from Atheme
+    pub async fn handle_atheme_sasl_response(&self, message: &Message) -> Result<()> {
+        // Handle SASL responses from Atheme
+        // Format: SASL <server> <uid> <result> [data]
+        
+        if message.params.len() < 3 {
+            return Err(Error::MessageParse("SASL response requires at least 3 parameters".to_string()));
+        }
+        
+        let uid_str = &message.params[1];
+        let result = &message.params[2];
+        let data = message.params.get(3).map(|s| s.as_str());
+        
+        // Parse UID
+        let client_id = Uuid::parse_str(uid_str)
+            .map_err(|_| Error::MessageParse("Invalid UID in SASL response".to_string()))?;
+        
+        // Get pending request
+        let mut pending_requests = self.sasl_requests.write().await;
+        let sasl_request = match pending_requests.remove(&client_id) {
+            Some(req) => req,
+            None => {
+                tracing::warn!("Received SASL response for unknown UID: {}", uid_str);
+                return Ok(());
+            }
+        };
+        
+        // Update statistics
+        {
+            let mut stats = self.sasl_stats.write().await;
+            stats.pending_requests -= 1;
+        }
+        
+        // Process SASL response
+        match result.as_str() {
+            "SUCCESS" => {
+                let mut stats = self.sasl_stats.write().await;
+                stats.successful += 1;
+                
+                // Extract account name from data if provided
+                let account_name = data.unwrap_or(&sasl_request.request.username);
+                
+                tracing::info!("SASL authentication successful for user {} (account: {})", 
+                              sasl_request.request.username, account_name);
+                
+                // TODO: Store authentication result and notify SASL module
+                // This would typically involve calling back to the SASL module
+                // with the authentication result
+            }
+            "FAILURE" => {
+                let mut stats = self.sasl_stats.write().await;
+                stats.failed += 1;
+                
+                let reason = data.unwrap_or("Authentication failed");
+                tracing::warn!("SASL authentication failed for user {}: {}", 
+                              sasl_request.request.username, reason);
+                
+                // TODO: Notify SASL module of failure
+            }
+            "CHALLENGE" => {
+                if let Some(challenge_data) = data {
+                    tracing::debug!("Received SASL challenge for user {}", sasl_request.request.username);
+                    
+                    // TODO: Forward challenge to client via SASL module
+                    // This would require the SASL module to handle the challenge response
+                }
+            }
+            _ => {
+                let mut stats = self.sasl_stats.write().await;
+                stats.protocol_errors += 1;
+                
+                tracing::error!("Unknown SASL result from Atheme: {}", result);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Clean up expired SASL requests
+    pub async fn cleanup_expired_sasl_requests(&self) -> Result<()> {
+        let now = chrono::Utc::now();
+        let mut pending_requests = self.sasl_requests.write().await;
+        
+        let expired_clients: Vec<Uuid> = pending_requests
+            .iter()
+            .filter(|(_, req)| req.timeout_at < now)
+            .map(|(client_id, _)| *client_id)
+            .collect();
+        
+        for client_id in expired_clients {
+            if let Some(_expired_request) = pending_requests.remove(&client_id) {
+                let mut stats = self.sasl_stats.write().await;
+                stats.timeouts += 1;
+                stats.pending_requests -= 1;
+                
+                tracing::warn!("SASL authentication timeout for client {}", client_id);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Get SASL statistics
+    pub async fn get_sasl_stats(&self) -> AthemeSaslStats {
+        let stats = self.sasl_stats.read().await;
+        AthemeSaslStats {
+            successful: stats.successful,
+            failed: stats.failed,
+            timeouts: stats.timeouts,
+            protocol_errors: stats.protocol_errors,
+            pending_requests: self.sasl_requests.read().await.len() as u64,
+        }
+    }
 }
 
 impl Clone for AthemeIntegration {
@@ -945,6 +1191,8 @@ impl Clone for AthemeIntegration {
             connections: self.connections.clone(),
             stats: self.stats.clone(),
             connection_stream: self.connection_stream.clone(),
+            sasl_requests: self.sasl_requests.clone(),
+            sasl_stats: self.sasl_stats.clone(),
         }
     }
 }
@@ -1046,6 +1294,11 @@ impl Service for AthemeServicesModule {
                     self.integration.handle_atheme_message_with_context(message, context).await?;
                     Ok(ServiceResult::Handled)
                 }
+                "SASL" => {
+                    // Handle SASL authentication responses from Atheme
+                    self.integration.handle_atheme_sasl_response(message).await?;
+                    Ok(ServiceResult::Handled)
+                }
                 _ => Ok(ServiceResult::NotHandled),
             }
         } else {
@@ -1134,5 +1387,60 @@ impl AthemeConfigBuilder {
 impl Default for AthemeConfigBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Atheme SASL authentication provider
+pub struct AthemeSaslAuthProvider {
+    /// Atheme integration
+    integration: Arc<AthemeIntegration>,
+}
+
+impl AthemeSaslAuthProvider {
+    /// Create a new Atheme SASL authentication provider
+    pub fn new(integration: Arc<AthemeIntegration>) -> Self {
+        Self { integration }
+    }
+}
+
+#[async_trait]
+impl AuthProvider for AthemeSaslAuthProvider {
+    fn name(&self) -> &str {
+        "atheme_sasl"
+    }
+    
+    fn description(&self) -> &str {
+        "Atheme SASL authentication provider"
+    }
+    
+    async fn is_available(&self) -> bool {
+        self.integration.is_connected().await
+    }
+    
+    async fn authenticate(&self, request: &AuthRequest) -> Result<AuthResult> {
+        self.integration.authenticate_sasl(request).await
+    }
+    
+    async fn validate(&self, auth_info: &AuthInfo) -> Result<bool> {
+        // For SASL authentication, we can validate by checking if the user
+        // is still connected and the authentication is recent
+        
+        if auth_info.provider != "atheme_sasl" {
+            return Ok(false);
+        }
+        
+        // Check if authentication is recent (within last hour)
+        let elapsed = chrono::Utc::now().signed_duration_since(auth_info.authenticated_at);
+        Ok(elapsed.num_hours() < 1)
+    }
+    
+    fn capabilities(&self) -> AuthProviderCapabilities {
+        AuthProviderCapabilities {
+            password_auth: true,
+            certificate_auth: true, // Atheme supports EXTERNAL mechanism
+            token_auth: false,
+            challenge_response: true, // SASL supports challenge-response
+            account_validation: true,
+        }
     }
 }

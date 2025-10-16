@@ -31,6 +31,7 @@ pub mod class_tracker;
 pub mod validation;
 pub mod cache;
 pub mod batch_optimizer;
+pub mod auth;
 
 #[cfg(test)]
 mod tests;
@@ -59,6 +60,7 @@ pub use broadcast::{BroadcastSystem, BroadcastTarget, BroadcastMessage, Broadcas
 pub use network::{NetworkQueryManager, NetworkMessageHandler, NetworkQuery, NetworkResponse, NetworkMessage};
 pub use throttling_manager::ThrottlingManager;
 pub use statistics::{StatisticsManager, ServerStatistics, CommandStats};
+pub use auth::{AuthManager, AuthProvider, AuthResult, AuthInfo, AuthRequest, ClientInfo, AuthProviderCapabilities};
 pub use motd::MotdManager;
 pub use lookup::{LookupService, DnsResolver, IdentClient, LookupResult, IdentResult};
 pub use module_numerics::{ModuleNumericManager, ModuleNumeric, ModuleNumericClient};

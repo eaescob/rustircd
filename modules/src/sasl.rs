@@ -3,7 +3,7 @@
 //! This module provides SASL authentication support as per IRCv3 specification.
 //! It supports various SASL mechanisms including PLAIN, EXTERNAL, and SCRAM-SHA-256.
 
-use rustircd_core::{Message, Client, Result, Error, NumericReply, MessageType, ModuleNumericManager, module::{ModuleContext, ModuleResult, ModuleStatsResponse}};
+use rustircd_core::{Message, Client, Result, Error, NumericReply, MessageType, ModuleNumericManager, module::{ModuleContext, ModuleResult, ModuleStatsResponse}, AuthManager, AuthRequest, ClientInfo};
 use std::collections::HashMap;
 use uuid::Uuid;
 use async_trait::async_trait;
@@ -17,6 +17,8 @@ pub struct SaslModule {
     sessions: std::sync::Arc<tokio::sync::RwLock<HashMap<Uuid, SaslSession>>>,
     /// SASL mechanisms
     mechanisms: Vec<Box<dyn SaslMechanism>>,
+    /// Authentication manager
+    auth_manager: std::sync::Arc<AuthManager>,
 }
 
 /// Configuration for the SASL module
@@ -141,11 +143,16 @@ pub struct PlainMechanism {
     /// Service name
     #[allow(dead_code)]
     service_name: String,
+    /// Authentication manager
+    auth_manager: std::sync::Arc<AuthManager>,
 }
 
 impl PlainMechanism {
-    pub fn new(service_name: String) -> Self {
-        Self { service_name }
+    pub fn new(service_name: String, auth_manager: std::sync::Arc<AuthManager>) -> Self {
+        Self { 
+            service_name,
+            auth_manager,
+        }
     }
 }
 
@@ -171,7 +178,7 @@ impl SaslMechanism for PlainMechanism {
         }
     }
     
-    async fn step(&self, _client: &Client, data: &str) -> Result<SaslResponse> {
+    async fn step(&self, client: &Client, data: &str) -> Result<SaslResponse> {
         // Decode base64 data
         let decoded = general_purpose::STANDARD.decode(data)
             .map_err(|_| Error::MessageParse("Invalid base64 data".to_string()))?;
@@ -193,33 +200,62 @@ impl SaslMechanism for PlainMechanism {
         let username = parts[1].to_string();
         let password = parts[2].to_string();
         
-        // Implement authentication against services
-        // For now, implement basic credential validation
-        // TODO: Integrate with actual services backend (Atheme, etc.)
+        // Use the authentication manager to authenticate the user
+        let client_info = ClientInfo {
+            id: client.id,
+            ip: client.remote_addr.to_string(),
+            hostname: client.user.as_ref().map(|u| u.host.clone()),
+            secure: false, // TODO: Determine if connection is secure
+        };
         
-        // Basic validation - in production this should query services
-        if username.is_empty() || password.is_empty() {
-            return Ok(SaslResponse {
-                response_type: SaslResponseType::Failure,
-                data: None,
-                error: Some("Invalid credentials".to_string()),
-            });
-        }
-        
-        // For now, accept any non-empty credentials
-        // In production, this would:
-        // 1. Query the services backend (Atheme, etc.)
-        // 2. Validate the username/password combination
-        // 3. Check account status and permissions
-        // 4. Return appropriate success/failure response
+        let auth_request = AuthRequest {
+            username: username.clone(),
+            credential: password.clone(),
+            authzid,
+            client_info,
+            context: HashMap::new(),
+        };
         
         tracing::info!("SASL PLAIN authentication attempt for user: {}", username);
         
-        Ok(SaslResponse {
-            response_type: SaslResponseType::Success,
-            data: None,
-            error: None,
-        })
+        match self.auth_manager.authenticate(&auth_request).await? {
+            rustircd_core::AuthResult::Success(auth_info) => {
+                tracing::info!("SASL PLAIN authentication successful for user: {}", auth_info.username);
+                
+                Ok(SaslResponse {
+                    response_type: SaslResponseType::Success,
+                    data: None,
+                    error: None,
+                })
+            }
+            rustircd_core::AuthResult::Failure(reason) => {
+                tracing::warn!("SASL PLAIN authentication failed for user {}: {}", username, reason);
+                
+                Ok(SaslResponse {
+                    response_type: SaslResponseType::Failure,
+                    data: None,
+                    error: Some(reason),
+                })
+            }
+            rustircd_core::AuthResult::Challenge(challenge) => {
+                tracing::info!("SASL PLAIN authentication challenge for user: {}", username);
+                
+                Ok(SaslResponse {
+                    response_type: SaslResponseType::Challenge,
+                    data: Some(challenge),
+                    error: None,
+                })
+            }
+            rustircd_core::AuthResult::InProgress => {
+                tracing::info!("SASL PLAIN authentication in progress for user: {}", username);
+                
+                Ok(SaslResponse {
+                    response_type: SaslResponseType::Continue,
+                    data: None,
+                    error: None,
+                })
+            }
+        }
     }
     
     async fn complete(&self, client: &Client) -> Result<SaslAuthData> {
@@ -242,11 +278,16 @@ pub struct ExternalMechanism {
     #[allow(dead_code)]
     /// Service name
     service_name: String,
+    /// Authentication manager
+    auth_manager: std::sync::Arc<AuthManager>,
 }
 
 impl ExternalMechanism {
-    pub fn new(service_name: String) -> Self {
-        Self { service_name }
+    pub fn new(service_name: String, auth_manager: std::sync::Arc<AuthManager>) -> Self {
+        Self { 
+            service_name,
+            auth_manager,
+        }
     }
 }
 
@@ -290,21 +331,22 @@ impl SaslMechanism for ExternalMechanism {
 
 impl SaslModule {
     /// Create a new SASL module
-    pub fn new(config: SaslConfig) -> Self {
+    pub fn new(config: SaslConfig, auth_manager: std::sync::Arc<AuthManager>) -> Self {
         let mut mechanisms: Vec<Box<dyn SaslMechanism>> = Vec::new();
         
         // Add supported mechanisms
         if config.mechanisms.contains(&"PLAIN".to_string()) {
-            mechanisms.push(Box::new(PlainMechanism::new(config.service_name.clone())));
+            mechanisms.push(Box::new(PlainMechanism::new(config.service_name.clone(), auth_manager.clone())));
         }
         if config.mechanisms.contains(&"EXTERNAL".to_string()) {
-            mechanisms.push(Box::new(ExternalMechanism::new(config.service_name.clone())));
+            mechanisms.push(Box::new(ExternalMechanism::new(config.service_name.clone(), auth_manager.clone())));
         }
         
         Self {
             config,
             sessions: std::sync::Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             mechanisms,
+            auth_manager,
         }
     }
     
@@ -525,7 +567,7 @@ impl SaslModule {
 
 impl Default for SaslModule {
     fn default() -> Self {
-        Self::new(SaslConfig::default())
+        Self::new(SaslConfig::default(), std::sync::Arc::new(AuthManager::default()))
     }
 }
 

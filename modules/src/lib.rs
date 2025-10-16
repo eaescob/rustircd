@@ -21,6 +21,7 @@ pub mod services;
 pub mod oper;
 pub mod sasl;
 pub mod opme;
+pub mod auth;
 
 pub use channel::{ChannelModule, Channel, ChannelMember, ChannelMode};
 pub use ircv3::Ircv3Module;
@@ -41,3 +42,4 @@ pub use services::{ServicesModule, ServiceConfig, Service, ServiceType, ServiceS
 pub use oper::{OperModule, OperConfig, OperatorAware, DefaultOperatorAware, OperatorChecker, OperatorAction};
 pub use sasl::{SaslModule, SaslConfig, SaslSession, SaslAuthData, SaslState, SaslMechanism, SaslResponse, SaslResponseType, SaslCapabilityExtension};
 pub use opme::{OpmeModule, OpmeConfig, OpmeRateLimit, OpmeStats, OpmeConfigBuilder};
+pub use auth::{LdapAuthProvider, DatabaseAuthProvider, FileAuthProvider, HttpAuthProvider, SupabaseAuthProvider, SupabaseAuthConfig, SupabaseAuthProviderBuilder};

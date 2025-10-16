@@ -1,0 +1,431 @@
+################################################################################
+# RustIRCd - Authentication Configuration Examples
+################################################################################
+#
+# This file contains example configurations for various authentication providers
+# that can be used with RustIRCd. Copy the relevant sections to your main
+# configuration file.
+#
+# Available authentication providers:
+# - LDAP/Active Directory
+# - Database (PostgreSQL, MySQL, SQLite)
+# - HTTP API
+# - File-based
+# - Supabase
+# - Atheme IRC Services
+#
+################################################################################
+
+################################################################################
+# AUTHENTICATION MANAGER SETTINGS
+################################################################################
+# Central authentication configuration
+
+[auth]
+# Cache authentication results for 1 hour (3600 seconds)
+cache_ttl_seconds = 3600
+
+# Primary authentication provider (must match one of the enabled providers below)
+primary_provider = "ldap"
+
+# Fallback providers (tried in order if primary fails)
+fallback_providers = ["database", "file"]
+
+# Maximum number of cached authentication results
+max_cache_size = 10000
+
+# How often to clean up expired cache entries (seconds)
+cache_cleanup_interval = 300
+
+################################################################################
+# SASL MODULE CONFIGURATION
+################################################################################
+# Simple Authentication and Security Layer for IRC clients
+
+[modules.sasl]
+# Enable SASL authentication
+enabled = true
+
+# Supported SASL mechanisms
+# PLAIN: Username/password (requires TLS)
+# EXTERNAL: Certificate-based authentication
+# SCRAM-SHA-256: Challenge-response (more secure)
+mechanisms = ["PLAIN", "EXTERNAL"]
+
+# Security settings
+allow_insecure_mechanisms = false  # Require TLS for PLAIN mechanism
+require_ssl = true                 # Require SSL/TLS for all SASL
+
+# Session management
+max_failed_attempts = 3           # Max failed attempts per client
+session_timeout_seconds = 300     # SASL session timeout (5 minutes)
+max_sessions_per_ip = 5          # Limit concurrent SASL sessions per IP
+
+# Advanced settings
+enable_capability_negotiation = true
+sasl_mechanisms_capability = true
+
+################################################################################
+# LDAP/ACTIVE DIRECTORY AUTHENTICATION
+################################################################################
+# Authenticate users against LDAP servers or Active Directory
+
+[auth.ldap]
+# Enable LDAP authentication
+enabled = true
+
+# LDAP server configuration
+server_url = "ldaps://ldap.company.com:636"  # Use ldaps:// for SSL
+# Alternative: "ldap://ldap.company.com:389" for non-SSL (not recommended)
+
+# Service account credentials for LDAP binding
+bind_dn = "CN=IRC Service Account,OU=Service Accounts,DC=company,DC=com"
+bind_password = "service_account_password"  # Use environment variable: ${LDAP_BIND_PASSWORD}
+
+# Search configuration
+base_dn = "OU=Users,DC=company,DC=com"      # Where to search for users
+username_attribute = "sAMAccountName"       # Username field (sAMAccountName for AD)
+search_filter = "(&(objectClass=user)(objectCategory=person))"  # LDAP search filter
+
+# Security and performance
+use_tls = true                    # Use TLS encryption
+timeout_seconds = 30             # Connection timeout
+max_connections = 10             # Connection pool size
+
+# Alternative LDAP configuration for OpenLDAP
+# [auth.ldap]
+# enabled = true
+# server_url = "ldaps://openldap.company.com:636"
+# bind_dn = "cn=admin,dc=company,dc=com"
+# bind_password = "admin_password"
+# base_dn = "ou=users,dc=company,dc=com"
+# username_attribute = "uid"
+# search_filter = "(objectClass=person)"
+# use_tls = true
+# timeout_seconds = 30
+# max_connections = 10
+
+################################################################################
+# DATABASE AUTHENTICATION
+################################################################################
+# Authenticate users against a database (PostgreSQL, MySQL, SQLite)
+
+[auth.database]
+# Enable database authentication
+enabled = true
+
+# Database connection
+# PostgreSQL example:
+connection_string = "postgresql://irc_user:password@localhost/ircdb"
+# MySQL example: "mysql://irc_user:password@localhost/ircdb"
+# SQLite example: "sqlite:///var/lib/rustircd/users.db"
+
+# Table and column configuration
+user_table = "users"             # Table containing user accounts
+username_column = "username"     # Column with usernames
+password_column = "password_hash" # Column with password hashes
+email_column = "email"           # Column with email addresses (optional)
+active_column = "is_active"      # Column indicating if account is active (optional)
+
+# Password hashing
+password_hash_algorithm = "bcrypt"  # Options: bcrypt, scrypt, argon2, plain (not recommended)
+
+# Performance settings
+connection_pool_size = 10        # Number of database connections in pool
+timeout_seconds = 30             # Query timeout
+idle_timeout = 300              # Close idle connections after 5 minutes
+
+# Example database schema for PostgreSQL:
+# CREATE TABLE users (
+#     id SERIAL PRIMARY KEY,
+#     username VARCHAR(50) UNIQUE NOT NULL,
+#     password_hash VARCHAR(255) NOT NULL,
+#     email VARCHAR(255),
+#     is_active BOOLEAN DEFAULT true,
+#     created_at TIMESTAMP DEFAULT NOW()
+# );
+
+################################################################################
+# HTTP API AUTHENTICATION
+################################################################################
+# Authenticate users against a REST API
+
+[auth.http]
+# Enable HTTP API authentication
+enabled = true
+
+# API configuration
+base_url = "https://api.yourservice.com"  # Base URL of your API
+auth_endpoint = "/authenticate"           # Authentication endpoint
+
+# Request configuration
+method = "POST"                           # HTTP method (POST, GET)
+username_field = "username"              # Field name for username
+password_field = "password"              # Field name for password
+
+# Response handling
+response_format = "json"                 # Response format: json, xml, plain
+success_field = "success"                # Field indicating success
+user_field = "user"                      # Field containing user data
+
+# Authentication
+api_key = "your-api-key"                 # API key for authentication
+# Alternative: "Bearer your-jwt-token"
+
+# Performance settings
+timeout_seconds = 30                     # Request timeout
+max_connections = 10                     # Maximum concurrent requests
+
+# Example API request:
+# POST https://api.yourservice.com/authenticate
+# Authorization: Bearer your-api-key
+# Content-Type: application/json
+# {
+#   "username": "alice",
+#   "password": "password123"
+# }
+
+# Example API response:
+# {
+#   "success": true,
+#   "user": {
+#     "id": 123,
+#     "username": "alice",
+#     "email": "alice@example.com"
+#   }
+# }
+
+################################################################################
+# FILE-BASED AUTHENTICATION
+################################################################################
+# Authenticate users against a local configuration file
+
+[auth.file]
+# Enable file-based authentication
+enabled = true
+
+# File configuration
+file_path = "/etc/rustircd/users.conf"   # Path to user configuration file
+format = "ini"                           # File format: ini, json, csv
+username_field = "username"              # Field name for username
+password_field = "password_hash"         # Field name for password hash
+
+# File handling
+case_sensitive = true                    # Case-sensitive username matching
+reload_on_change = true                  # Automatically reload when file changes
+check_interval_seconds = 60             # How often to check for file changes
+
+# Example file format (/etc/rustircd/users.conf):
+# [user1]
+# username = alice
+# password_hash = $2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4VbJJyL5Kq
+# email = alice@example.com
+#
+# [user2]
+# username = bob
+# password_hash = $2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4VbJJyL5Kq
+# email = bob@example.com
+
+################################################################################
+# SUPABASE AUTHENTICATION
+################################################################################
+# Authenticate users against a Supabase project
+
+[auth.supabase]
+# Enable Supabase authentication
+enabled = true
+
+# Supabase configuration
+project_url = "https://your-project-id.supabase.co"  # Your Supabase project URL
+api_key = "your-supabase-anon-key"                  # Your Supabase anon key
+
+# Database table configuration
+user_table = "irc_users"                # Table name in Supabase
+username_column = "username"            # Username column name
+password_column = "password_hash"       # Password hash column name
+email_column = "email"                  # Email column name (optional)
+
+# Authentication method
+use_email_auth = false                  # Use email instead of username for auth
+
+# Performance settings
+timeout_seconds = 30                    # Request timeout
+max_connections = 10                    # Maximum concurrent requests
+
+# Supabase table schema:
+# CREATE TABLE irc_users (
+#   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+#   username TEXT UNIQUE NOT NULL,
+#   email TEXT UNIQUE NOT NULL,
+#   password_hash TEXT NOT NULL,
+#   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+#   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+#   is_active BOOLEAN DEFAULT true
+# );
+#
+# -- Enable Row Level Security
+# ALTER TABLE irc_users ENABLE ROW LEVEL SECURITY;
+#
+# -- Create policy for reading user data
+# CREATE POLICY "Allow read access for auth" ON irc_users
+#   FOR SELECT USING (true);
+
+################################################################################
+# ATHEME SERVICES AUTHENTICATION
+################################################################################
+# Authenticate users against Atheme IRC services
+
+[services.atheme]
+# Enable Atheme services integration
+enabled = true
+
+# Atheme server configuration
+hostname = "services.example.com"       # Atheme server hostname
+port = 7000                            # Atheme server port
+service_name = "AuthServ"              # Service name for authentication
+password = "services_password"         # Service password
+use_ssl = true                         # Use SSL/TLS connection
+
+# Connection settings
+timeout_seconds = 30                   # Connection timeout
+max_retries = 3                        # Maximum connection retries
+retry_delay = 5                        # Delay between retries (seconds)
+
+# SASL integration
+[auth.atheme_sasl]
+# Enable Atheme SASL authentication
+enabled = true
+
+# SASL configuration
+service_provider = "atheme"            # Reference to Atheme services
+mechanisms = ["PLAIN"]                 # Supported SASL mechanisms
+timeout_seconds = 30                   # SASL request timeout
+
+################################################################################
+# LOGGING CONFIGURATION
+################################################################################
+# Configure authentication and SASL logging
+
+[logging]
+# General logging level
+level = "info"                         # Options: error, warn, info, debug, trace
+
+# Authentication-specific logging
+auth_logging = true                    # Log authentication events
+sasl_logging = true                    # Log SASL-specific events
+
+# Log file locations
+auth_log_file = "/var/log/rustircd/auth.log"
+sasl_log_file = "/var/log/rustircd/sasl.log"
+error_log_file = "/var/log/rustircd/error.log"
+
+# Log rotation
+max_log_size = "100MB"                 # Maximum log file size
+max_log_files = 5                      # Number of log files to keep
+
+################################################################################
+# MONITORING AND STATISTICS
+################################################################################
+# Enable authentication monitoring and statistics
+
+[auth.monitoring]
+# Enable authentication statistics
+enable_stats = true
+
+# Statistics reporting
+stats_interval = 60                    # Report stats every minute
+stats_log_file = "/var/log/rustircd/auth_stats.log"
+
+# Alerting
+alert_on_failures = true               # Alert on authentication failures
+failure_threshold = 10                 # Alert after N failures in interval
+alert_email = "admin@example.com"      # Email for alerts
+
+# Performance monitoring
+track_response_times = true            # Track authentication response times
+slow_query_threshold = 5.0             # Alert on queries slower than N seconds
+
+################################################################################
+# SECURITY CONFIGURATION
+################################################################################
+# Security settings for authentication
+
+[auth.security]
+# Rate limiting
+enable_rate_limiting = true            # Enable authentication rate limiting
+max_attempts_per_minute = 10          # Max auth attempts per minute per IP
+rate_limit_window = 60                # Rate limit window in seconds
+
+# IP restrictions
+allowed_networks = [                   # Networks allowed to authenticate
+    "192.168.0.0/16",
+    "10.0.0.0/8"
+]
+blocked_networks = [                   # Networks blocked from authentication
+    "0.0.0.0/8"                       # Example: block localhost
+]
+
+# Password policies
+min_password_length = 8               # Minimum password length
+require_strong_passwords = true       # Enforce password complexity
+
+################################################################################
+# ENVIRONMENT VARIABLES
+################################################################################
+# Use environment variables for sensitive configuration
+# 
+# In your main config file, you can reference environment variables:
+# bind_password = "${LDAP_BIND_PASSWORD}"
+# api_key = "${API_KEY}"
+# connection_string = "${DATABASE_URL}"
+#
+# Set these environment variables in your system:
+# export LDAP_BIND_PASSWORD="your_ldap_password"
+# export API_KEY="your_api_key"
+# export DATABASE_URL="postgresql://user:pass@localhost/db"
+
+################################################################################
+# EXAMPLE COMPLETE CONFIGURATION
+################################################################################
+# Here's a complete example for a production environment:
+
+# [server]
+# name = "irc.company.com"
+# description = "Company IRC Server"
+# 
+# [modules.sasl]
+# enabled = true
+# mechanisms = ["PLAIN", "EXTERNAL"]
+# allow_insecure_mechanisms = false
+# require_ssl = true
+# 
+# [auth]
+# primary_provider = "ldap"
+# fallback_providers = ["database"]
+# cache_ttl_seconds = 3600
+# 
+# [auth.ldap]
+# enabled = true
+# server_url = "ldaps://ldap.company.com:636"
+# bind_dn = "CN=IRC Service,OU=Services,DC=company,DC=com"
+# bind_password = "${LDAP_BIND_PASSWORD}"
+# base_dn = "OU=Users,DC=company,DC=com"
+# username_attribute = "sAMAccountName"
+# use_tls = true
+# 
+# [auth.database]
+# enabled = true
+# connection_string = "${DATABASE_URL}"
+# user_table = "irc_users"
+# username_column = "username"
+# password_column = "password_hash"
+# password_hash_algorithm = "bcrypt"
+# 
+# [logging]
+# level = "info"
+# auth_logging = true
+# sasl_logging = true
+# 
+# [auth.security]
+# enable_rate_limiting = true
+# max_attempts_per_minute = 10

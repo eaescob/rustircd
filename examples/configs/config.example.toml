@@ -642,8 +642,7 @@ cleanup_interval_seconds = 300
 
 [services]
 services_directory = "services"
-enabled_services = []           # Add ["atheme"] to enable Atheme services
-service_settings = {}           # Service-specific settings
+enabled_services = []           # Deprecated - use individual service.enabled instead
 services = []                   # Service definitions
 
 # Example Atheme Services Configuration
@@ -656,8 +655,11 @@ services = []                   # Service definitions
 # port = 6666                           # Port to connect on
 # password = "service_link_password"    # Link password
 # tls = false                           # Use TLS for services connection
+# tls_verify = true                     # Verify TLS certificate
+# tls_ca_file = "/etc/ssl/certs/ca.pem" # Custom CA file (optional)
 # enabled = true                        # Enable this service
-
+# 
+# # Service-specific configuration (all in one place)
 # [services.services.config]
 # service_name = "services.example.com"
 # protocol = "charybdis"                # IRC protocol to use
@@ -666,24 +668,12 @@ services = []                   # Service definitions
 # receive_password = "service_link_password"  # Password we expect
 # flags = ["topicburst"]                # Service flags
 # class = "server"                      # Connection class
+# timeout_seconds = 30
+# reconnect_interval = 60
+# max_reconnect_attempts = 10
 
-# Service-specific settings (optional)
-# Use service_settings field above to configure service-specific options
-# Example for Atheme:
-# service_settings = {
-#   atheme = {
-#     enabled = true,
-#     protocol = "charybdis",
-#     uplink_name = "example.irc.network",
-#     send_password = "service_link_password",
-#     receive_password = "service_link_password",
-#     flags = ["topicburst"],
-#     class = "server",
-#     timeout_seconds = 30,
-#     reconnect_interval = 60,
-#     max_reconnect_attempts = 10
-#   }
-# }
+# All service configuration is done in the individual [[services.services]] blocks above
+# No need for separate service_settings - everything is configured per-service
 
 
 ################################################################################
@@ -897,5 +887,305 @@ enable_efficient_broadcasting = true    # Use optimized broadcast algorithms
 # - Leaf servers get smaller buffers
 # - Different timeout and ping settings per server type
 #
+################################################################################
+# AUTHENTICATION PROVIDERS CONFIGURATION
+################################################################################
+# Choose ONE of the following authentication methods by uncommenting the desired section
+# and commenting out the others. Each method provides SASL authentication support.
+#
+# To enable SASL authentication:
+# 1. Add "sasl" to modules.enabled_modules
+# 2. Uncomment ONE of the authentication providers below
+# 3. Configure the selected provider with your specific settings
+# 4. Set environment variables as needed
+# 5. Restart the server
+
+# ================================================================================
+# OPTION 1: SUPABASE AUTHENTICATION
+# ================================================================================
+# Uncomment this section to use Supabase for user authentication
+# Requires: Supabase project with users table
+# 
+# [auth.supabase]
+# enabled = true
+# project_url = "https://your-project-id.supabase.co"
+# api_key = "${SUPABASE_ANON_KEY}"
+# user_table = "irc_users"
+# username_column = "username"
+# password_column = "password_hash"
+# email_column = "email"
+# use_email_auth = false
+# timeout_seconds = 30
+# max_connections = 10
+# 
+# # Required Supabase table schema:
+# # CREATE TABLE irc_users (
+# #   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+# #   username TEXT UNIQUE NOT NULL,
+# #   email TEXT UNIQUE NOT NULL,
+# #   password_hash TEXT NOT NULL,
+# #   real_name TEXT,
+# #   hostname TEXT,
+# #   is_active BOOLEAN DEFAULT true,
+# #   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+# #   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+# # );
+
+# ================================================================================
+# OPTION 2: LDAP AUTHENTICATION
+# ================================================================================
+# Uncomment this section to use LDAP/Active Directory for user authentication
+# 
+# [auth.ldap]
+# enabled = true
+# server_url = "ldaps://ldap.company.com:636"
+# bind_dn = "CN=IRC Service,OU=Services,DC=company,DC=com"
+# bind_password = "${LDAP_BIND_PASSWORD}"
+# base_dn = "OU=Users,DC=company,DC=com"
+# username_attribute = "sAMAccountName"
+# use_tls = true
+# timeout_seconds = 30
+# max_connections = 10
+
+# ================================================================================
+# OPTION 3: DATABASE AUTHENTICATION
+# ================================================================================
+# Uncomment this section to use a direct database connection for authentication
+# 
+# [auth.database]
+# enabled = true
+# connection_string = "${DATABASE_URL}"
+# user_table = "users"
+# username_column = "username"
+# password_column = "password_hash"
+# password_hash_algorithm = "bcrypt"  # Options: bcrypt, argon2, scrypt, pbkdf2
+# timeout_seconds = 30
+# max_connections = 10
+# 
+# # Required database table schema:
+# # CREATE TABLE users (
+# #   id SERIAL PRIMARY KEY,
+# #   username VARCHAR(50) UNIQUE NOT NULL,
+# #   password_hash VARCHAR(255) NOT NULL,
+# #   email VARCHAR(255),
+# #   real_name VARCHAR(255),
+# #   created_at TIMESTAMP DEFAULT NOW(),
+# #   last_login TIMESTAMP,
+# #   is_active BOOLEAN DEFAULT TRUE
+# # );
+
+# ================================================================================
+# OPTION 4: IRC SERVICES AUTHENTICATION (SIMPLIFIED)
+# ================================================================================
+# Uncomment this section to use IRC services (Atheme, Anope) for authentication
+# Services automatically become super servers - no duplication needed!
+# 
+# # 1. Define the service (automatically becomes super server)
+# [[services.services]]
+# name = "services.example.org"
+# service_type = "atheme"              # or "anope"
+# hostname = "localhost"
+# port = 6666
+# password = "your_atheme_password"
+# tls = true                           # Enable TLS for secure connection
+# tls_verify = true                    # Verify TLS certificate
+# tls_ca_file = "/etc/ssl/certs/ca.pem"  # Custom CA file (optional)
+# enabled = true
+# 
+# # 2. Configure authentication to use services
+# [authentication]
+# enabled = true
+# method = "services"                  # Automatically uses the service above
+# require_auth = false
+# cache_ttl_seconds = 3600
+# max_cache_size = 10000
+# 
+# # That's it! No duplication, no confusion.
+# # The service IS the super server, and authentication automatically uses it.
+# 
+# # Required Atheme configuration (atheme.conf):
+# # [atheme]
+# # uplink = "example.irc.network"
+# # uplink_password = "your_atheme_password"
+# # 
+# # [services]
+# # name = "services.example.org"
+# # 
+# # [sasl]
+# # enabled = true
+# # mechanisms = ["PLAIN", "EXTERNAL"]
+
+# ================================================================================
+# OPTION 5: HTTP API AUTHENTICATION
+# ================================================================================
+# Uncomment this section to use HTTP API for authentication
+# 
+# [auth.http]
+# enabled = true
+# base_url = "https://api.example.com"
+# auth_endpoint = "/auth/verify"
+# method = "POST"  # POST or GET
+# headers = { "Authorization" = "Bearer ${API_TOKEN}" }
+# timeout_seconds = 30
+# max_connections = 10
+# 
+# # Expected API response format:
+# # {
+# #   "success": true,
+# #   "user": {
+# #     "username": "testuser",
+# #     "email": "test@example.com",
+# #     "real_name": "Test User"
+# #   }
+# # }
+
+# ================================================================================
+# OPTION 6: FILE-BASED AUTHENTICATION
+# ================================================================================
+# Uncomment this section to use a simple file for authentication
+# 
+# [auth.file]
+# enabled = true
+# user_file = "/etc/rustircd/users.conf"
+# password_hash_algorithm = "bcrypt"
+# 
+# # User file format (users.conf):
+# # username:password_hash:email:real_name
+# # testuser:$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4J/5Kz8K2:test@example.com:Test User
+# # admin:$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4J/5Kz8K2:admin@example.com:Admin User
+
+################################################################################
+# SIMPLIFIED CONFIGURATION EXAMPLES
+################################################################################
+# Below are complete examples showing the new simplified configuration approach
+# Choose the example that matches your authentication needs
+
+# ================================================================================
+# EXAMPLE 1: DIRECT AUTHENTICATION (Supabase)
+# ================================================================================
+# Complete configuration for direct authentication using Supabase
+# 
+# [authentication]
+# enabled = true
+# method = "direct"
+# require_auth = false
+# cache_ttl_seconds = 3600
+# max_cache_size = 10000
+# primary_provider = "supabase"
+# 
+# [authentication.direct]
+# providers = ["supabase"]
+# 
+# [authentication.direct.supabase]
+# enabled = true
+# project_url = "https://your-project.supabase.co"
+# api_key = "${SUPABASE_ANON_KEY}"
+# user_table = "irc_users"
+# username_column = "username"
+# password_column = "password_hash"
+# email_column = "email"
+# use_email_auth = false
+# timeout_seconds = 30
+# max_connections = 10
+
+# ================================================================================
+# EXAMPLE 2: IRC SERVICES AUTHENTICATION (Atheme)
+# ================================================================================
+# Complete configuration for IRC services authentication using Atheme
+# 
+# # Service definition (automatically becomes super server)
+# [[services.services]]
+# name = "services.example.org"
+# service_type = "atheme"
+# hostname = "services.example.org"
+# port = 6697
+# password = "your_atheme_password"
+# tls = true
+# tls_verify = true
+# tls_ca_file = "/etc/ssl/certs/ca.pem"
+# enabled = true
+# 
+# # Authentication configuration (automatically uses service above)
+# [authentication]
+# enabled = true
+# method = "services"
+# require_auth = false
+# cache_ttl_seconds = 3600
+# max_cache_size = 10000
+# 
+# # SASL module configuration
+# [modules.sasl]
+# enabled = true
+# mechanisms = ["PLAIN", "EXTERNAL"]
+# require_sasl = false
+# timeout_seconds = 300
+
+# ================================================================================
+# EXAMPLE 3: PRODUCTION SETUP WITH TLS
+# ================================================================================
+# Complete production setup with TLS and services
+# 
+# [server]
+# name = "irc.example.com"
+# description = "Production IRC Server"
+# 
+# [connection]
+# bind_address = "0.0.0.0"
+# ports = [
+#     { port = 6667, connection_type = "Client", tls = false },
+#     { port = 6697, connection_type = "Client", tls = true }
+# ]
+# 
+# [security.tls]
+# enabled = true
+# cert_file = "/etc/ssl/certs/irc.example.com.crt"
+# key_file = "/etc/ssl/private/irc.example.com.key"
+# 
+# # Service with TLS
+# [[services.services]]
+# name = "services.example.org"
+# service_type = "atheme"
+# hostname = "services.example.org"
+# port = 6697
+# password = "secure_service_password"
+# tls = true
+# tls_verify = true
+# enabled = true
+# 
+# # Authentication using services
+# [authentication]
+# enabled = true
+# method = "services"
+# require_auth = true
+# cache_ttl_seconds = 3600
+# 
+# # Enable required modules
+# [modules]
+# enabled_modules = ["sasl", "ircv3", "oper", "admin"]
+
+################################################################################
+# SASL MODULE CONFIGURATION
+################################################################################
+# SASL (Simple Authentication and Security Layer) configuration
+# This is required for SASL authentication to work
+# 
+# [modules.sasl]
+# enabled = true
+# mechanisms = ["PLAIN", "EXTERNAL"]
+# sasl_service = "SaslServ"              # Name of the SASL service (for service-based auth)
+# service_name = "services.example.org"  # Service server name (for service-based auth)
+# require_sasl = false                   # Whether to require SASL for all users
+# timeout_seconds = 300                  # SASL authentication timeout
+
+################################################################################
+# AUTHENTICATION MANAGER CONFIGURATION
+################################################################################
+# Global authentication settings
+# 
+# [auth]
+# primary_provider = "supabase"          # Primary authentication provider name
+# cache_ttl_seconds = 3600               # Cache authentication for 1 hour
+# max_cache_size = 10000                 # Maximum cached authentications
+
 ################################################################################
 

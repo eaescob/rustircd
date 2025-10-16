@@ -119,6 +119,17 @@ impl ModuleContext {
         client_connections.remove(&user_id);
         Ok(())
     }
+    
+    /// Get a client by ID
+    pub async fn get_client_by_id(&self, client_id: Uuid) -> Option<Arc<Client>> {
+        let client_connections = self.client_connections.read().await;
+        client_connections.get(&client_id).cloned()
+    }
+    
+    /// Get a user by ID
+    pub async fn get_user_by_id(&self, user_id: Uuid) -> Option<User> {
+        self.database.get_user(user_id)
+    }
 }
 
 /// Module trait that all modules must implement

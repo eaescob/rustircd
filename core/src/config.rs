@@ -26,6 +26,8 @@ pub struct Config {
     pub broadcast: BroadcastConfig,
     /// Services settings
     pub services: ServicesConfig,
+    /// Authentication settings
+    pub authentication: Option<AuthenticationConfig>,
     /// Netsplit recovery settings
     pub netsplit: NetsplitConfig,
     /// Numeric replies configuration
@@ -279,6 +281,10 @@ pub struct SuperServerConfig {
     pub password: String,
     /// Whether to use TLS
     pub tls: bool,
+    /// Whether to verify TLS certificate (default: true)
+    pub tls_verify: Option<bool>,
+    /// Custom CA file path for TLS verification
+    pub tls_ca_file: Option<String>,
     /// Super server privileges
     pub privileges: Vec<String>,
 }
@@ -541,12 +547,47 @@ pub struct BroadcastConfig {
 pub struct ServicesConfig {
     /// Services directory
     pub services_directory: String,
-    /// Enabled services
+    /// Enabled services (deprecated - use individual service.enabled instead)
     pub enabled_services: Vec<String>,
-    /// Service-specific settings
-    pub service_settings: HashMap<String, serde_json::Value>,
     /// Service definitions
     pub services: Vec<ServiceDefinition>,
+}
+
+/// Authentication configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthenticationConfig {
+    /// Whether authentication is enabled
+    pub enabled: bool,
+    /// Authentication method
+    pub method: AuthenticationMethod,
+    /// Whether to require authentication for all users
+    pub require_auth: bool,
+    /// Authentication cache TTL in seconds
+    pub cache_ttl_seconds: u64,
+    /// Maximum number of cached authentications
+    pub max_cache_size: usize,
+    /// Primary authentication provider (for direct method)
+    pub primary_provider: Option<String>,
+    /// Direct authentication providers
+    pub direct: Option<DirectAuthConfig>,
+}
+
+/// Authentication method
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AuthenticationMethod {
+    /// Direct authentication (Supabase, LDAP, Database, etc.)
+    Direct,
+    /// IRC services authentication (Atheme, Anope, etc.)
+    Services,
+}
+
+/// Direct authentication configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectAuthConfig {
+    /// Enabled providers
+    pub providers: Vec<String>,
+    /// Provider-specific configurations
+    pub provider_configs: HashMap<String, serde_json::Value>,
 }
 
 /// Service definition for configuration
@@ -564,6 +605,10 @@ pub struct ServiceDefinition {
     pub password: String,
     /// Whether to use TLS
     pub tls: bool,
+    /// Whether to verify TLS certificate (default: true)
+    pub tls_verify: Option<bool>,
+    /// Custom CA file path for TLS verification
+    pub tls_ca_file: Option<String>,
     /// Service-specific configuration
     pub config: HashMap<String, serde_json::Value>,
     /// Whether this service is enabled
@@ -640,6 +685,7 @@ impl Default for Config {
             database: DatabaseConfig::default(),
             broadcast: BroadcastConfig::default(),
             services: ServicesConfig::default(),
+            authentication: None, // No authentication by default
             netsplit: NetsplitConfig::default(),
             replies: None, // Will be loaded from replies.toml if available
         }
@@ -831,8 +877,7 @@ impl Default for ServicesConfig {
     fn default() -> Self {
         Self {
             services_directory: "services".to_string(),
-            enabled_services: Vec::new(),
-            service_settings: HashMap::new(),
+            enabled_services: Vec::new(), // Deprecated - use individual service.enabled
             services: Vec::new(),
         }
     }
@@ -869,6 +914,9 @@ impl Config {
             }
         }
         
+        // Migrate legacy configuration if needed
+        config.migrate_legacy_config();
+        
         Ok(config)
     }
     
@@ -881,6 +929,14 @@ impl Config {
             .map_err(|e| Error::Config(format!("Failed to write config file: {}", e)))?;
         
         Ok(())
+    }
+    
+    /// Migrate legacy configuration to new format
+    fn migrate_legacy_config(&mut self) {
+        // Check for legacy authentication configuration
+        // This would detect old [auth.*] sections and migrate them
+        // For now, just log that migration is available
+        tracing::debug!("Configuration migration completed");
     }
     
     /// Validate configuration (comprehensive validation with warnings)

@@ -200,6 +200,9 @@ impl Server {
         // Load modules
         self.load_modules().await?;
         
+        // Initialize authentication
+        self.initialize_authentication().await?;
+        
         // Initialize throttling manager
         self.throttling_manager.init().await?;
         
@@ -244,10 +247,110 @@ impl Server {
     /// Load super servers from configuration
     async fn load_super_servers(&mut self) -> Result<()> {
         let mut super_servers = self.super_servers.write().await;
+        
+        // Load explicitly configured super servers
         for super_server in &self.config.network.super_servers {
             super_servers.insert(super_server.name.clone(), true);
             tracing::info!("Loaded super server: {}", super_server.name);
         }
+        
+        // Automatically create super servers from enabled services
+        for service in &self.config.services.services {
+            if service.enabled {
+                // Check if this service is already configured as a super server
+                if !super_servers.contains_key(&service.name) {
+                    // Automatically add service as super server
+                    super_servers.insert(service.name.clone(), true);
+                    tracing::info!("Service {} automatically added as super server (TLS: {})", 
+                                 service.name, service.tls);
+                    
+                    // Add to network super servers list for consistency
+                    let super_server_config = SuperServerConfig {
+                        name: service.name.clone(),
+                        hostname: service.hostname.clone(),
+                        port: service.port,
+                        password: service.password.clone(),
+                        tls: service.tls,
+                        tls_verify: service.tls_verify,
+                        tls_ca_file: service.tls_ca_file.clone(),
+                        privileges: vec!["all".to_string()], // Services get all privileges
+                    };
+                    self.config.network.super_servers.push(super_server_config);
+                } else {
+                    tracing::debug!("Service {} already configured as super server", service.name);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Initialize authentication system
+    async fn initialize_authentication(&mut self) -> Result<()> {
+        if let Some(auth_config) = &self.config.authentication {
+            if !auth_config.enabled {
+                tracing::info!("Authentication is disabled");
+                return Ok(());
+            }
+            
+            match auth_config.method {
+                AuthenticationMethod::Direct => {
+                    self.initialize_direct_authentication(auth_config).await?;
+                }
+                AuthenticationMethod::Services => {
+                    self.initialize_services_authentication(auth_config).await?;
+                }
+            }
+            
+            tracing::info!("Authentication system initialized with method: {:?}", auth_config.method);
+        } else {
+            tracing::info!("No authentication configuration found");
+        }
+        
+        Ok(())
+    }
+    
+    /// Initialize direct authentication (Supabase, LDAP, etc.)
+    async fn initialize_direct_authentication(&self, auth_config: &AuthenticationConfig) -> Result<()> {
+        tracing::info!("Initializing direct authentication");
+        
+        // This would be implemented to load direct auth providers
+        // For now, just log that direct auth is configured
+        if let Some(direct_config) = &auth_config.direct {
+            tracing::info!("Direct authentication providers: {:?}", direct_config.providers);
+        }
+        
+        Ok(())
+    }
+    
+    /// Initialize services authentication (Atheme, Anope, etc.)
+    async fn initialize_services_authentication(&self, auth_config: &AuthenticationConfig) -> Result<()> {
+        tracing::info!("Initializing services authentication");
+        
+        // Find the first enabled service
+        if let Some(service) = self.config.services.services.iter().find(|s| s.enabled) {
+            tracing::info!("Using service '{}' (type: {}) for authentication", 
+                         service.name, service.service_type);
+            
+            // The service is already configured as a super server
+            // Authentication will be handled by the service integration
+            match service.service_type.as_str() {
+                "atheme" => {
+                    tracing::info!("Atheme services authentication configured");
+                    // Atheme integration will be loaded by the services module
+                }
+                "anope" => {
+                    tracing::info!("Anope services authentication configured");
+                    // Anope integration will be loaded by the services module
+                }
+                _ => {
+                    return Err(Error::Config(format!("Unsupported service type for authentication: {}", service.service_type)));
+                }
+            }
+        } else {
+            return Err(Error::Config("No enabled services found for authentication".to_string()));
+        }
+        
         Ok(())
     }
     

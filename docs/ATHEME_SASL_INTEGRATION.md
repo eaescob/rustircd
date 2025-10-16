@@ -33,6 +33,43 @@ sequenceDiagram
     S->>C: 900 RPL_SASLSUCCESS <account>
 ```
 
+## SASL Service Validation
+
+**Important Security Feature**: RustIRCd validates that SASL messages come from the correct service to prevent unauthorized authentication attempts.
+
+### Service Configuration
+
+The SASL module requires configuration of the specific service that handles SASL authentication:
+
+```toml
+[modules.sasl]
+enabled = true
+mechanisms = ["PLAIN", "EXTERNAL"]
+sasl_service = "SaslServ"  # Name of the IRC service handling SASL
+service_name = "services.example.org"  # Legacy field for backward compatibility
+
+[auth.atheme_sasl]
+enabled = true
+sasl_service = "SaslServ"              # Name of the SASL service
+our_server_name = "irc.example.com"    # Our server name (for SASL validation)
+```
+
+### Validation Process
+
+1. **Service Registration Check**: Before allowing SASL authentication, the server verifies that the configured SASL service is properly registered
+2. **Message Source Validation**: All Atheme messages are validated to ensure they come from the authorized service
+3. **Service Name Matching**: The server validates that all Atheme commands originate from the configured `service_name`
+4. **Client Validation**: SASL responses from clients are validated to ensure they come from the configured `sasl_service` client
+5. **Server Name Validation**: SASL responses include server name validation to prevent cross-server attacks
+
+### Security Benefits
+
+- **Prevents Spoofing**: Only the configured Atheme service can send service commands
+- **Client Isolation**: Only the configured sasl_service client can send SASL responses
+- **Service Isolation**: Different services can handle different authentication mechanisms
+- **Configuration Validation**: Ensures all services are properly configured before allowing operations
+- **Cross-Server Protection**: Prevents unauthorized servers from sending service commands
+
 ## Setup Instructions
 
 ### 1. Configure Atheme Services

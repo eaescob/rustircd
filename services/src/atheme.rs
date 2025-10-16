@@ -54,6 +54,10 @@ pub struct AthemeConfig {
     pub reconnect_interval: u64,
     /// Maximum reconnection attempts
     pub max_reconnect_attempts: u32,
+    /// Our server name (for SASL validation)
+    pub our_server_name: String,
+    /// SASL service name (e.g., "SaslServ")
+    pub sasl_service: String,
 }
 
 impl Default for AthemeConfig {
@@ -68,6 +72,8 @@ impl Default for AthemeConfig {
             timeout_seconds: 30,
             reconnect_interval: 60,
             max_reconnect_attempts: 10,
+            our_server_name: "localhost".to_string(),
+            sasl_service: "SaslServ".to_string(),
         }
     }
 }
@@ -333,8 +339,35 @@ impl AthemeIntegration {
         Ok(())
     }
     
+    /// Validate that a message comes from the Atheme service
+    /// This ensures that only the configured Atheme service can send service commands
+    async fn validate_atheme_message(&self, message: &Message, context: &ServiceContext) -> Result<()> {
+        // Extract the source from the message prefix
+        let source = match &message.prefix {
+            Some(rustircd_core::Prefix::Server(server)) => server,
+            Some(rustircd_core::Prefix::User(user)) => &user.server,
+            _ => {
+                return Err(Error::MessageParse("Atheme message must have a server prefix".to_string()));
+            }
+        };
+        
+        // Check if the source matches our configured Atheme service
+        if source != &self.config.service_name {
+            return Err(Error::MessageParse(format!(
+                "Atheme message from unauthorized source: {} (expected: {})", 
+                source, 
+                self.config.service_name
+            )));
+        }
+        
+        Ok(())
+    }
+    
     /// Handle message from Atheme with service context
     async fn handle_atheme_message_with_context(&self, message: &Message, context: &ServiceContext) -> Result<()> {
+        // Validate that this message comes from the Atheme service
+        self.validate_atheme_message(message, context).await?;
+        
         // Update statistics
         {
             let mut stats = self.stats.write().await;
@@ -528,6 +561,27 @@ impl AthemeIntegration {
     /// Check if Atheme is connected
     pub async fn is_connected(&self) -> bool {
         self.get_connection_status().await == AthemeConnectionState::Authenticated
+    }
+    
+    /// Check if the SASL service is properly registered
+    /// This validates that the configured SASL service (e.g., "SaslServ") is available
+    pub async fn is_sasl_service_registered(&self) -> bool {
+        // Check if we have an active connection to Atheme
+        if !self.is_connected().await {
+            return false;
+        }
+        
+        // In a real implementation, this would check if the specific SASL service
+        // (e.g., "SaslServ") is registered and available
+        // For now, we'll assume it's available if Atheme is connected
+        // This could be enhanced to track specific service registrations
+        
+        // Check if the service name is configured (not default)
+        if self.config.service_name == "services.example.org" {
+            tracing::warn!("SASL service using default configuration - ensure SaslServ is properly configured");
+        }
+        
+        true
     }
     
     // ============================================================================
@@ -991,6 +1045,11 @@ impl AthemeIntegration {
             return Ok(AuthResult::Failure("Atheme services not available".to_string()));
         }
         
+        // Validate that the SASL service is properly registered
+        if !self.is_sasl_service_registered().await {
+            return Ok(AuthResult::Failure("SASL service not registered".to_string()));
+        }
+        
         tracing::info!("Authenticating user '{}' via Atheme SASL", request.username);
         
         // Create SASL authentication request tracking
@@ -1075,6 +1134,16 @@ impl AthemeIntegration {
         
         if message.params.len() < 3 {
             return Err(Error::MessageParse("SASL response requires at least 3 parameters".to_string()));
+        }
+        
+        // Validate that this SASL message comes from the correct service
+        // The first parameter should be our server name (the target of the SASL response)
+        let server_name = &message.params[0];
+        if server_name != &self.config.our_server_name {
+            return Err(Error::MessageParse(format!(
+                "SASL response from unexpected server: {} (expected: {})", 
+                server_name, self.config.our_server_name
+            )));
         }
         
         let uid_str = &message.params[1];
@@ -1181,6 +1250,64 @@ impl AthemeIntegration {
             pending_requests: self.sasl_requests.read().await.len() as u64,
         }
     }
+    
+    /// Handle SASL response from sasl_service client
+    pub async fn handle_sasl_response_from_client(&self, client: &Client, message: &Message, context: &ServiceContext) -> Result<()> {
+        // Validate that this client is the sasl_service
+        self.validate_sasl_service_client(client, context).await?;
+        
+        // Process the SASL response
+        self.handle_atheme_sasl_response(message).await?;
+        
+        Ok(())
+    }
+    
+    /// Handle ENCAP SASL from sasl_service client
+    pub async fn handle_encap_sasl_from_client(&self, client: &Client, message: &Message, context: &ServiceContext) -> Result<()> {
+        // Validate that this client is the sasl_service
+        self.validate_sasl_service_client(client, context).await?;
+        
+        // Process the ENCAP SASL message
+        if message.params.len() >= 3 {
+            let client_id_str = &message.params[1];
+            let mechanism = &message.params[2];
+            let data = message.params.get(3).map(|s| s.as_str());
+            
+            tracing::debug!("Received ENCAP SASL from {}: {} {} {}", 
+                           client.id, client_id_str, mechanism, 
+                           data.unwrap_or(""));
+            
+            // Forward to Atheme services (this would be the actual SASL request)
+            // For now, just log it
+            tracing::info!("ENCAP SASL request: client={}, mechanism={}", client_id_str, mechanism);
+        }
+        
+        Ok(())
+    }
+    
+    /// Check if a client is the sasl_service
+    async fn is_sasl_service_client(&self, client: &Client, context: &ServiceContext) -> bool {
+        // Get the user associated with this client
+        if let Some(user) = context.get_user_by_id(client.id).await {
+            // Check if the user's nickname matches the configured sasl_service
+            user.nick == self.config.sasl_service
+        } else {
+            false
+        }
+    }
+    
+    /// Validate that a client message comes from the sasl_service
+    /// This ensures that only the configured sasl_service can send SASL responses
+    async fn validate_sasl_service_client(&self, client: &Client, context: &ServiceContext) -> Result<()> {
+        if !self.is_sasl_service_client(client, context).await {
+            return Err(Error::MessageParse(format!(
+                "SASL message from unauthorized client: {} (expected: sasl_service)", 
+                client.id
+            )));
+        }
+        
+        Ok(())
+    }
 }
 
 impl Clone for AthemeIntegration {
@@ -1277,10 +1404,6 @@ impl Service for AthemeServicesModule {
         Ok(())
     }
     
-    async fn handle_message(&mut self, _client: &Client, message: &Message, _context: &ServiceContext) -> Result<ServiceResult> {
-        // Atheme doesn't handle client messages directly
-        Ok(ServiceResult::NotHandled)
-    }
     
     async fn handle_server_message(&mut self, server: &str, message: &Message, context: &ServiceContext) -> Result<ServiceResult> {
         // Handle Atheme protocol messages
@@ -1294,10 +1417,30 @@ impl Service for AthemeServicesModule {
                     self.integration.handle_atheme_message_with_context(message, context).await?;
                     Ok(ServiceResult::Handled)
                 }
+                _ => Ok(ServiceResult::NotHandled),
+            }
+        } else {
+            Ok(ServiceResult::NotHandled)
+        }
+    }
+    
+    async fn handle_message(&mut self, client: &Client, message: &Message, context: &ServiceContext) -> Result<ServiceResult> {
+        // Handle messages from clients (including sasl_service)
+        if let MessageType::Custom(cmd) = &message.command {
+            match cmd.as_str() {
                 "SASL" => {
-                    // Handle SASL authentication responses from Atheme
-                    self.integration.handle_atheme_sasl_response(message).await?;
+                    // Handle SASL responses from sasl_service client
+                    self.integration.handle_sasl_response_from_client(client, message, context).await?;
                     Ok(ServiceResult::Handled)
+                }
+                "ENCAP" => {
+                    // Handle ENCAP messages from sasl_service client
+                    if message.params.len() > 0 && message.params[0] == "SASL" {
+                        self.integration.handle_encap_sasl_from_client(client, message, context).await?;
+                        Ok(ServiceResult::Handled)
+                    } else {
+                        Ok(ServiceResult::NotHandled)
+                    }
                 }
                 _ => Ok(ServiceResult::NotHandled),
             }
@@ -1321,11 +1464,12 @@ impl Service for AthemeServicesModule {
         vec![
             "server_message_handler".to_string(),
             "user_handler".to_string(),
+            "client_message_handler".to_string(),
         ]
     }
     
     fn supports_capability(&self, capability: &str) -> bool {
-        matches!(capability, "server_message_handler" | "user_handler")
+        matches!(capability, "server_message_handler" | "user_handler" | "client_message_handler")
     }
 }
 

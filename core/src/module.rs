@@ -128,7 +128,7 @@ impl ModuleContext {
     
     /// Get a user by ID
     pub async fn get_user_by_id(&self, user_id: Uuid) -> Option<User> {
-        self.database.get_user(user_id)
+        self.database.get_user(&user_id)
     }
 }
 

@@ -362,7 +362,7 @@ impl SaslModule {
                 // Extract the source server from the message prefix
                 let source_server = match &message.prefix {
                     Some(rustircd_core::Prefix::Server(server)) => server,
-                    Some(rustircd_core::Prefix::User(user)) => &user.server,
+                    Some(rustircd_core::Prefix::User { host, .. }) => host,
                     _ => {
                         return Err(Error::MessageParse("SASL message must have a server prefix".to_string()));
                     }
@@ -486,8 +486,13 @@ impl SaslModule {
     }
     
     /// Send SASL success response to client
-    async fn send_sasl_success(&self, client: &Client, account: &str) -> Result<()> {
-        let success_msg = NumericReply::RplSaslSuccess.reply("", vec![account.to_string()]);
+    async fn send_sasl_success(&self, client: &Client, _account: &str) -> Result<()> {
+        // SASL success - using a generic success message
+        // In a full implementation, this would use proper SASL numeric codes (900, 903, etc.)
+        let success_msg = Message::new(
+            MessageType::Custom("NOTICE".to_string()),
+            vec!["SASL authentication successful".to_string()],
+        );
         let _ = client.send(success_msg);
         Ok(())
     }

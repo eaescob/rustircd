@@ -31,7 +31,12 @@ impl ServiceContext {
     pub async fn get_user_by_nick(&self, nick: &str) -> Option<User> {
         self.database.get_user_by_nick(nick)
     }
-    
+
+    /// Get a user by ID
+    pub async fn get_user_by_id(&self, user_id: uuid::Uuid) -> Option<User> {
+        self.database.get_user(&user_id)
+    }
+
     /// Update a user in the database
     pub async fn update_user(&self, user: User) -> Result<()> {
         self.database.add_user(user)

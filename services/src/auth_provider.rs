@@ -100,7 +100,7 @@ impl ServicesAuthProvider {
     }
     
     /// Validate user credentials against services
-    async fn validate_user_credentials(&self, user: &rustircd_core::User, credential: &str) -> Result<bool> {
+    async fn validate_user_credentials(&self, _user: &rustircd_core::User, credential: &str) -> Result<bool> {
         // This is a placeholder implementation
         // In practice, you would:
         // 1. Query the services backend (NickServ) for the user's account
@@ -119,7 +119,7 @@ impl ServicesAuthProvider {
     }
     
     /// Send authentication request to services backend
-    async fn send_auth_request_to_services(&self, username: &str, credential: &str) -> Result<String> {
+    async fn send_auth_request_to_services(&self, username: &str, _credential: &str) -> Result<String> {
         // This would send a message to the services backend
         // For Atheme, this might be a NickServ authentication request
         // For other services, it would be the appropriate protocol
@@ -166,7 +166,7 @@ impl AuthProvider for ServicesAuthProvider {
         }
         
         // Check if user still exists in database
-        if let Some(user) = self.context.get_user_by_nick(&auth_info.username).await {
+        if let Some(_user) = self.context.get_user_by_nick(&auth_info.username).await {
             // Additional validation could be added here
             // For example, checking if the user's account is still active
             Ok(true)
@@ -333,7 +333,7 @@ impl ServicesAuthManager {
     pub async fn update_provider_availability(&self, provider_name: &str, available: bool) -> Result<()> {
         let providers = self.service_providers.read().await;
         
-        if let Some(provider) = providers.get(provider_name) {
+        if let Some(_provider) = providers.get(provider_name) {
             // This is a bit of a hack since we can't modify the provider directly
             // In practice, you'd want to add a method to AuthProvider for this
             tracing::info!("Updated availability for provider '{}': {}", provider_name, available);

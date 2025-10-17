@@ -46,7 +46,7 @@ impl Service for ExampleService {
         Ok(())
     }
     
-    async fn handle_message(&mut self, client: &Client, message: &Message, context: &ServiceContext) -> Result<ServiceResult> {
+    async fn handle_message(&mut self, client: &Client, message: &Message, _context: &ServiceContext) -> Result<ServiceResult> {
         // Example: Handle custom service commands
         if let rustircd_core::MessageType::Custom(cmd) = &message.command {
             match cmd.as_str() {
@@ -100,7 +100,7 @@ impl ExampleService {
         // TODO: Integrate with actual service registry for dynamic service list
         
         let services_list = "Available services: example, help, nickserv, chanserv";
-        let response = Message::new(
+        let _response = Message::new(
             rustircd_core::MessageType::Custom("SERVICES".to_string()),
             vec![services_list.to_string()],
         );
@@ -125,7 +125,7 @@ impl ExampleService {
             format!("Help for: {}", message.params.join(" "))
         };
         
-        let response = Message::new(
+        let _response = Message::new(
             rustircd_core::MessageType::Custom("HELP".to_string()),
             vec![help_text.clone()],
         );

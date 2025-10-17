@@ -341,11 +341,11 @@ impl AthemeIntegration {
     
     /// Validate that a message comes from the Atheme service
     /// This ensures that only the configured Atheme service can send service commands
-    async fn validate_atheme_message(&self, message: &Message, context: &ServiceContext) -> Result<()> {
+    async fn validate_atheme_message(&self, message: &Message, _context: &ServiceContext) -> Result<()> {
         // Extract the source from the message prefix
         let source = match &message.prefix {
             Some(rustircd_core::Prefix::Server(server)) => server,
-            Some(rustircd_core::Prefix::User(user)) => &user.server,
+            Some(rustircd_core::Prefix::User { host, .. }) => host,
             _ => {
                 return Err(Error::MessageParse("Atheme message must have a server prefix".to_string()));
             }
@@ -959,7 +959,7 @@ impl AthemeIntegration {
     async fn trigger_account_notification(&self, nick: &str, account: Option<&str>, context: &ServiceContext) -> Result<()> {
         // Get user from database
         if let Some(user) = context.get_user_by_nick(nick).await {
-            let user_id = user.id;
+            let _user_id = user.id;
             
             if let Some(account_name) = account {
                 tracing::info!("NickServ: User {} identified as account {}", nick, account_name);
@@ -1197,7 +1197,7 @@ impl AthemeIntegration {
                 // TODO: Notify SASL module of failure
             }
             "CHALLENGE" => {
-                if let Some(challenge_data) = data {
+                if let Some(_challenge_data) = data {
                     tracing::debug!("Received SASL challenge for user {}", sasl_request.request.username);
                     
                     // TODO: Forward challenge to client via SASL module
@@ -1405,7 +1405,7 @@ impl Service for AthemeServicesModule {
     }
     
     
-    async fn handle_server_message(&mut self, server: &str, message: &Message, context: &ServiceContext) -> Result<ServiceResult> {
+    async fn handle_server_message(&mut self, _server: &str, message: &Message, context: &ServiceContext) -> Result<ServiceResult> {
         // Handle Atheme protocol messages
         if let MessageType::Custom(cmd) = &message.command {
             match cmd.as_str() {

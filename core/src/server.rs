@@ -7,6 +7,7 @@ use crate::{
     ServerConnectionManager, ServerConnection, Prefix,
     ThrottlingManager, StatisticsManager, MotdManager,
     LookupService, RehashService,
+    config::{SuperServerConfig, AuthenticationMethod, AuthenticationConfig},
 };
 use chrono::Utc;
 use std::collections::HashMap;
@@ -324,7 +325,7 @@ impl Server {
     }
     
     /// Initialize services authentication (Atheme, Anope, etc.)
-    async fn initialize_services_authentication(&self, auth_config: &AuthenticationConfig) -> Result<()> {
+    async fn initialize_services_authentication(&self, _auth_config: &AuthenticationConfig) -> Result<()> {
         tracing::info!("Initializing services authentication");
         
         // Find the first enabled service

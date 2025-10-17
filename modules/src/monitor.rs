@@ -522,39 +522,42 @@ mod tests {
     #[tokio::test]
     async fn test_monitor_module_creation() {
         let module = MonitorModule::new();
-        let monitored_users = module.get_monitored_users("test_client").await;
+        let client_id = uuid::Uuid::new_v4();
+        let monitored_users = module.get_monitored_users(client_id).await;
         assert!(monitored_users.is_empty());
     }
     
     #[tokio::test]
     async fn test_add_remove_monitor() {
         let module = MonitorModule::new();
-        
+        let client_id = uuid::Uuid::new_v4();
+
         // Add monitor
-        module.add_monitor("client1", "alice").await.unwrap();
-        let monitored = module.get_monitored_users("client1").await;
-        assert!(monitored.contains("alice"));
-        
+        module.add_monitor(client_id, "alice").await.unwrap();
+        let monitored = module.get_monitored_users(client_id).await;
+        assert!(monitored.contains(&"alice".to_string()));
+
         // Remove monitor
-        module.remove_monitor("client1", "alice").await.unwrap();
-        let monitored = module.get_monitored_users("client1").await;
-        assert!(!monitored.contains("alice"));
+        module.remove_monitor(client_id, "alice").await.unwrap();
+        let monitored = module.get_monitored_users(client_id).await;
+        assert!(!monitored.contains(&"alice".to_string()));
     }
     
     #[tokio::test]
     async fn test_clear_monitors() {
         let module = MonitorModule::new();
-        
+        let client_id = uuid::Uuid::new_v4();
+
         // Add multiple monitors
-        module.add_monitor("client1", "alice").await.unwrap();
-        module.add_monitor("client1", "bob").await.unwrap();
-        
-        let monitored = module.get_monitored_users("client1").await;
+        module.add_monitor(client_id, "alice").await.unwrap();
+        module.add_monitor(client_id, "bob").await.unwrap();
+
+        let monitored = module.get_monitored_users(client_id).await;
         assert_eq!(monitored.len(), 2);
-        
+
         // Clear all monitors
-        module.clear_monitors("client1").await.unwrap();
-        let monitored = module.get_monitored_users("client1").await;
+        module.clear_monitors(client_id).await.unwrap();
+        let monitored = module.get_monitored_users(client_id).await;
         assert!(monitored.is_empty());
     }
 }

@@ -3,11 +3,10 @@
 //! This example demonstrates how to set up and use the new authentication system
 //! with SASL, services integration, and external authentication providers.
 
-use rustircd_core::{AuthManager, Config};
+use rustircd_core::AuthManager;
 use rustircd_modules::{SaslModule, SaslConfig, LdapAuthProvider, DatabaseAuthProvider, FileAuthProvider, HttpAuthProvider};
-use rustircd_services::{ServicesAuthManager, ServiceContext, AthemeServicesModule};
+use rustircd_services::{ServicesAuthManager, framework::ServiceContext};
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use std::collections::HashMap;
 
 #[tokio::main]
@@ -46,6 +45,7 @@ async fn setup_sasl_with_auth_providers(auth_manager: Arc<AuthManager>) -> Resul
         enabled: true,
         mechanisms: vec!["PLAIN".to_string(), "EXTERNAL".to_string()],
         service_name: "services.example.org".to_string(),
+        sasl_service: "SaslServ".to_string(),
         require_sasl: false,
         timeout_seconds: 300,
     };
@@ -64,9 +64,10 @@ async fn setup_services_integration() -> Result<(), Box<dyn std::error::Error>> 
     println!("\n2. Setting up services integration...");
     
     // Create service context (simplified for example)
+    let config = Arc::new(rustircd_core::Config::default());
     let service_context = Arc::new(ServiceContext::new(
-        Arc::new(rustircd_core::Database::new(rustircd_core::DatabaseConfig::default())),
-        Arc::new(rustircd_core::ServerConnectionManager::new()),
+        Arc::new(rustircd_core::Database::new(1000, 30)),
+        Arc::new(rustircd_core::ServerConnectionManager::new(config)),
     ));
     
     // Create services authentication manager

@@ -163,7 +163,8 @@ async fn test_message_serialization() {
         MessageType::PrivMsg,
         vec!["#channel".to_string(), "Hello world".to_string()],
     );
-    let serialized = msg.to_string().trim();
+    let msg_string = msg.to_string();
+    let serialized = msg_string.trim();
     assert!(serialized.starts_with(":alice!user@host PRIVMSG #channel"));
     assert!(serialized.contains("Hello world"));
     
@@ -188,19 +189,19 @@ async fn test_user_modes() {
     
     // Test mode setting
     user.set_mode(UserMode::Invisible, true);
-    assert!(user.has_mode(&UserMode::Invisible));
-    
-    user.set_mode(UserMode::Wallops, true);
-    assert!(user.has_mode(&UserMode::Wallops));
+    assert!(user.has_mode('i'));
+
+    user.set_mode(UserMode::ServerNotices, true);
+    assert!(user.has_mode('s'));
     
     // Test mode unsetting
     user.set_mode(UserMode::Invisible, false);
-    assert!(!user.has_mode(&UserMode::Invisible));
+    assert!(!user.has_mode('i'));
     
     // Test operator mode
     assert!(!user.is_operator);
     user.set_mode(UserMode::Operator, true);
-    assert!(user.has_mode(&UserMode::Operator));
+    assert!(user.has_mode('o'));
 }
 
 #[tokio::test]
@@ -216,7 +217,7 @@ async fn test_broadcast_system() {
     system.subscribe_to_channel(client2_id, "#test".to_string());
     
     // Test channel subscription
-    let target = BroadcastTarget::Channel("#test".to_string());
+    let _target = BroadcastTarget::Channel("#test".to_string());
     
     // Unsubscribe
     system.unsubscribe_from_channel(&client1_id, "#test");
@@ -350,49 +351,60 @@ async fn test_validation_functions() {
 
 #[tokio::test]
 async fn test_throttling_manager() {
-    let throttling = ThrottlingManager::new(3, 60, 10);
+    use crate::config::ThrottlingConfig;
+
+    let config = ThrottlingConfig {
+        enabled: true,
+        max_connections_per_ip: 3,
+        time_window_seconds: 60,
+        initial_throttle_seconds: 10,
+        max_stages: 5,
+    };
+
+    let throttling = ThrottlingManager::new(config);
     let ip = "192.168.1.1".to_string();
-    
+
     // First connections should be allowed
-    assert!(throttling.check_connection(&ip).is_ok());
-    assert!(throttling.check_connection(&ip).is_ok());
-    assert!(throttling.check_connection(&ip).is_ok());
-    
+    assert!(throttling.check_connection_allowed(&ip).is_ok());
+    assert!(throttling.check_connection_allowed(&ip).is_ok());
+    assert!(throttling.check_connection_allowed(&ip).is_ok());
+
     // Fourth connection should be throttled
-    assert!(throttling.check_connection(&ip).is_err());
+    assert!(throttling.check_connection_allowed(&ip).is_err());
 }
 
 #[tokio::test]
 async fn test_class_tracker() {
     use crate::config::ConnectionClass;
-    
+    use std::net::IpAddr;
+
     let class = ConnectionClass {
         name: "default".to_string(),
-        max_sendq: 1048576,
-        max_recvq: 8192,
-        ping_frequency: 120,
-        connection_timeout: 300,
+        max_sendq: Some(1048576),
+        max_recvq: Some(8192),
+        ping_frequency: Some(120),
+        connection_timeout: Some(300),
         max_clients: Some(100),
         max_connections_per_ip: Some(3),
         max_connections_per_host: Some(5),
-        throttle: true,
+        disable_throttling: false,
+        description: None,
     };
-    
-    let tracker = ClassTracker::new();
-    tracker.register_class(class);
-    
+
+    // Create a config with the class
+    let mut config = Config::default();
+    config.classes = vec![class];
+
+    let tracker = ClassTracker::new(config);
+
     // Test connection tracking
-    let ip = "192.168.1.1".to_string();
-    let host = "host.example.com".to_string();
-    
-    assert!(tracker.can_accept_connection("default", &ip, &host).is_ok());
-    
-    let client_id = Uuid::new_v4();
-    tracker.track_connection(client_id, "default".to_string(), ip.clone(), host.clone());
-    
-    // Get stats
-    let stats = tracker.get_stats("default");
-    assert!(stats.is_some());
+    let ip: IpAddr = "192.168.1.1".parse().unwrap();
+    let host = "host.example.com";
+
+    assert!(tracker.can_accept_connection("default", ip, host).is_ok());
+
+    // Note: The new API doesn't have register_class, track_connection, or get_stats methods
+    // These are managed internally through the Config
 }
 
 #[test]

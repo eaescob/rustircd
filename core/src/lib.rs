@@ -1,7 +1,10 @@
 //! Rust IRC Daemon Core
-//! 
+//!
 //! This crate provides the core functionality for a modular IRC daemon implementation
 //! based on RFC 1459 and IRCv3 specifications.
+
+// Deny unwrap usage in production code, but allow in tests
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod client;
 pub mod config;
@@ -32,6 +35,7 @@ pub mod validation;
 pub mod cache;
 pub mod batch_optimizer;
 pub mod auth;
+pub mod audit;
 
 #[cfg(test)]
 mod tests;

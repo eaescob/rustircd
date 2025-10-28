@@ -1,7 +1,6 @@
 //! Tests for IRC command handling
 
 use rustircd_core::*;
-use uuid::Uuid;
 
 #[tokio::test]
 async fn test_nick_command() {

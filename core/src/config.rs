@@ -254,17 +254,91 @@ impl OperatorConfig {
 pub struct PasswordHasher;
 
 impl PasswordHasher {
-    /// Hash a password using SHA256
+    /// Hash a password using Argon2id (recommended)
+    ///
+    /// This method uses the Argon2id algorithm with secure defaults:
+    /// - Memory cost: 19 MiB
+    /// - Time cost: 2 iterations
+    /// - Parallelism: 1 thread
+    /// - Random salt per password
+    ///
+    /// Returns a PHC-formatted string that includes algorithm, parameters, salt, and hash.
     pub fn hash_password(password: &str) -> String {
+        use argon2::{
+            password_hash::{PasswordHasher as Argon2Hasher, SaltString},
+            Argon2,
+        };
+        use rand::rngs::OsRng;
+
+        let salt = SaltString::generate(&mut OsRng);
+        let argon2 = Argon2::default();
+
+        argon2
+            .hash_password(password.as_bytes(), &salt)
+            .expect("Failed to hash password")
+            .to_string()
+    }
+
+    /// Hash a password using legacy SHA-256 (deprecated, for migration only)
+    ///
+    /// This method is provided for backward compatibility during migration.
+    /// New passwords should use hash_password() which uses Argon2id.
+    #[deprecated(since = "0.1.0", note = "Use hash_password() with Argon2 instead")]
+    pub fn hash_password_sha256(password: &str) -> String {
         use sha2::{Sha256, Digest};
         let mut hasher = Sha256::new();
         hasher.update(password.as_bytes());
         format!("{:x}", hasher.finalize())
     }
-    
+
     /// Verify a password against its hash
+    ///
+    /// Automatically detects the hash format:
+    /// - Argon2 hashes start with "$argon2"
+    /// - SHA-256 hashes are 64 hex characters
+    ///
+    /// This allows backward compatibility with existing SHA-256 hashes
+    /// during the migration period.
     pub fn verify_password(password: &str, hash: &str) -> bool {
-        Self::hash_password(password) == hash
+        // Detect hash format
+        if hash.starts_with("$argon2") {
+            // Argon2 hash - use password_hash crate
+            use argon2::{
+                password_hash::{PasswordHash, PasswordVerifier},
+                Argon2,
+            };
+
+            match PasswordHash::new(hash) {
+                Ok(parsed_hash) => {
+                    Argon2::default()
+                        .verify_password(password.as_bytes(), &parsed_hash)
+                        .is_ok()
+                }
+                Err(e) => {
+                    tracing::error!("Failed to parse Argon2 hash: {}", e);
+                    false
+                }
+            }
+        } else if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            // Legacy SHA-256 hash (64 hex characters)
+            tracing::warn!("Using legacy SHA-256 password verification. Please migrate to Argon2.");
+            #[allow(deprecated)]
+            let computed_hash = Self::hash_password_sha256(password);
+            computed_hash == hash
+        } else {
+            tracing::error!("Unknown password hash format: {}", &hash[..hash.len().min(20)]);
+            false
+        }
+    }
+
+    /// Check if a hash is using the modern Argon2 format
+    pub fn is_argon2_hash(hash: &str) -> bool {
+        hash.starts_with("$argon2")
+    }
+
+    /// Check if a hash is using the legacy SHA-256 format
+    pub fn is_sha256_hash(hash: &str) -> bool {
+        hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit())
     }
 }
 
@@ -461,6 +535,8 @@ pub struct ModuleConfig {
     pub module_settings: HashMap<String, serde_json::Value>,
     /// Throttling configuration
     pub throttling: ThrottlingConfig,
+    /// Command rate limiting configuration
+    pub command_rate_limiting: CommandRateLimitConfig,
     /// Messaging modules configuration
     pub messaging: MessagingConfig,
 }
@@ -508,6 +584,38 @@ pub struct ThrottlingConfig {
     pub stage_factor: u64,
     /// Cleanup interval in seconds for expired throttle entries
     pub cleanup_interval_seconds: u64,
+}
+
+/// Action to take when a rate limit is exceeded
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RateLimitAction {
+    /// Drop the command silently (no error message sent)
+    Drop,
+    /// Send an error message to the user and drop the command
+    SendError,
+    /// Temporarily mute the user (future implementation)
+    Mute,
+}
+
+/// Command rate limiting configuration
+///
+/// Limits the number of commands a user can send within a time window
+/// to prevent flooding and DoS attacks through message spam, nick changes, etc.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandRateLimitConfig {
+    /// Enable command rate limiting
+    pub enabled: bool,
+    /// Maximum commands allowed within the time window
+    pub max_commands: usize,
+    /// Time window in seconds for command counting
+    pub time_window_seconds: u64,
+    /// Commands to rate limit (e.g., ["PRIVMSG", "NOTICE", "NICK"])
+    /// If empty, rate limiting applies to all commands
+    pub limited_commands: Vec<String>,
+    /// Whether to exempt operators from rate limiting
+    pub exempt_operators: bool,
+    /// Action to take when rate limit is exceeded
+    pub limit_action: RateLimitAction,
 }
 
 /// Database configuration
@@ -820,6 +928,7 @@ impl Default for ModuleConfig {
             enabled_modules: Vec::new(),
             module_settings: HashMap::new(),
             throttling: ThrottlingConfig::default(),
+            command_rate_limiting: CommandRateLimitConfig::default(),
             messaging: MessagingConfig::default(),
         }
     }
@@ -869,6 +978,20 @@ impl Default for ThrottlingConfig {
             max_stages: 10,
             stage_factor: 10,
             cleanup_interval_seconds: 300, // 5 minutes
+        }
+    }
+}
+
+impl Default for CommandRateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_commands: 10,
+            time_window_seconds: 60,
+            // Empty list means all commands are rate limited (most secure)
+            limited_commands: vec![],
+            exempt_operators: true,
+            limit_action: RateLimitAction::SendError,
         }
     }
 }
@@ -1446,7 +1569,244 @@ impl Config {
                 }
             }
         }
-        
+
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_command_rate_limit_config_defaults() {
+        let config = CommandRateLimitConfig::default();
+
+        assert_eq!(config.enabled, true, "Rate limiting should be enabled by default");
+        assert_eq!(config.max_commands, 10, "Default max commands should be 10");
+        assert_eq!(config.time_window_seconds, 60, "Default time window should be 60 seconds");
+        assert_eq!(config.limited_commands.len(), 0, "Default should rate limit ALL commands (empty list)");
+        assert_eq!(config.exempt_operators, true, "Operators should be exempt by default");
+        assert!(matches!(config.limit_action, RateLimitAction::SendError), "Default action should be SendError");
+    }
+
+    #[test]
+    fn test_rate_limit_action_serialization() {
+        // Test Drop
+        let drop_json = serde_json::to_string(&RateLimitAction::Drop).unwrap();
+        assert_eq!(drop_json, "\"Drop\"");
+        let drop_back: RateLimitAction = serde_json::from_str(&drop_json).unwrap();
+        assert!(matches!(drop_back, RateLimitAction::Drop));
+
+        // Test SendError
+        let error_json = serde_json::to_string(&RateLimitAction::SendError).unwrap();
+        assert_eq!(error_json, "\"SendError\"");
+        let error_back: RateLimitAction = serde_json::from_str(&error_json).unwrap();
+        assert!(matches!(error_back, RateLimitAction::SendError));
+
+        // Test Mute
+        let mute_json = serde_json::to_string(&RateLimitAction::Mute).unwrap();
+        assert_eq!(mute_json, "\"Mute\"");
+        let mute_back: RateLimitAction = serde_json::from_str(&mute_json).unwrap();
+        assert!(matches!(mute_back, RateLimitAction::Mute));
+    }
+
+    #[test]
+    fn test_command_rate_limit_config_toml_parsing() {
+        let toml_str = r#"
+            enabled = true
+            max_commands = 20
+            time_window_seconds = 120
+            limited_commands = []
+            exempt_operators = false
+            limit_action = "Drop"
+        "#;
+
+        let config: CommandRateLimitConfig = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(config.enabled, true);
+        assert_eq!(config.max_commands, 20);
+        assert_eq!(config.time_window_seconds, 120);
+        assert_eq!(config.limited_commands.len(), 0);
+        assert_eq!(config.exempt_operators, false);
+        assert!(matches!(config.limit_action, RateLimitAction::Drop));
+    }
+
+    #[test]
+    fn test_command_rate_limit_config_selective_commands() {
+        let toml_str = r#"
+            enabled = true
+            max_commands = 5
+            time_window_seconds = 30
+            limited_commands = ["PRIVMSG", "NOTICE", "NICK"]
+            exempt_operators = true
+            limit_action = "Mute"
+        "#;
+
+        let config: CommandRateLimitConfig = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(config.enabled, true);
+        assert_eq!(config.max_commands, 5);
+        assert_eq!(config.time_window_seconds, 30);
+        assert_eq!(config.limited_commands.len(), 3);
+        assert_eq!(config.limited_commands[0], "PRIVMSG");
+        assert_eq!(config.limited_commands[1], "NOTICE");
+        assert_eq!(config.limited_commands[2], "NICK");
+        assert_eq!(config.exempt_operators, true);
+        assert!(matches!(config.limit_action, RateLimitAction::Mute));
+    }
+
+    #[test]
+    fn test_module_config_includes_rate_limiting() {
+        let toml_str = r#"
+            module_directory = "modules"
+            enabled_modules = []
+            module_settings = {}
+
+            [throttling]
+            enabled = false
+            max_connections_per_ip = 5
+            time_window_seconds = 60
+            initial_throttle_seconds = 10
+            max_stages = 10
+            stage_factor = 10
+            cleanup_interval_seconds = 300
+
+            [command_rate_limiting]
+            enabled = true
+            max_commands = 15
+            time_window_seconds = 90
+            limited_commands = []
+            exempt_operators = true
+            limit_action = "SendError"
+
+            [messaging]
+            enabled = true
+
+            [messaging.wallops]
+            enabled = true
+            require_operator = true
+            receiver_mode = "w"
+            self_only_mode = true
+            mode_requires_operator = false
+
+            [messaging.globops]
+            enabled = true
+            require_operator = true
+            receiver_mode = "g"
+            self_only_mode = false
+            mode_requires_operator = true
+        "#;
+
+        let config: ModuleConfig = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(config.module_directory, "modules");
+        assert_eq!(config.command_rate_limiting.enabled, true);
+        assert_eq!(config.command_rate_limiting.max_commands, 15);
+        assert_eq!(config.command_rate_limiting.time_window_seconds, 90);
+        assert_eq!(config.command_rate_limiting.limited_commands.len(), 0);
+        assert_eq!(config.command_rate_limiting.exempt_operators, true);
+        assert!(matches!(config.command_rate_limiting.limit_action, RateLimitAction::SendError));
+    }
+
+    #[test]
+    fn test_command_rate_limit_config_disabled() {
+        let toml_str = r#"
+            enabled = false
+            max_commands = 10
+            time_window_seconds = 60
+            limited_commands = []
+            exempt_operators = true
+            limit_action = "SendError"
+        "#;
+
+        let config: CommandRateLimitConfig = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(config.enabled, false);
+    }
+
+    #[test]
+    fn test_empty_limited_commands_means_all() {
+        let config = CommandRateLimitConfig::default();
+
+        // Empty limited_commands should mean ALL commands are rate limited
+        assert!(
+            config.limited_commands.is_empty(),
+            "Empty limited_commands list is the most secure option - all commands are rate limited"
+        );
+    }
+
+    #[test]
+    fn test_rate_limit_action_all_variants() {
+        let actions = vec![
+            RateLimitAction::Drop,
+            RateLimitAction::SendError,
+            RateLimitAction::Mute,
+        ];
+
+        for action in actions {
+            // Ensure all actions can be serialized and deserialized
+            let json = serde_json::to_string(&action).unwrap();
+            let _deserialized: RateLimitAction = serde_json::from_str(&json).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_argon2_password_hashing() {
+        let password = "test_password_123";
+        let hash = PasswordHasher::hash_password(password);
+
+        // Verify Argon2 hash format
+        assert!(hash.starts_with("$argon2"), "Hash should start with $argon2");
+        assert!(PasswordHasher::is_argon2_hash(&hash), "Should be identified as Argon2 hash");
+
+        // Verify password verification works
+        assert!(PasswordHasher::verify_password(password, &hash), "Password verification should succeed");
+        assert!(!PasswordHasher::verify_password("wrong_password", &hash), "Wrong password should fail");
+    }
+
+    #[test]
+    fn test_sha256_password_backward_compatibility() {
+        // Legacy SHA-256 hash for "password" (for testing backward compatibility)
+        #[allow(deprecated)]
+        let legacy_hash = PasswordHasher::hash_password_sha256("password");
+
+        assert!(PasswordHasher::is_sha256_hash(&legacy_hash), "Should be identified as SHA-256 hash");
+        assert_eq!(legacy_hash.len(), 64, "SHA-256 hash should be 64 characters");
+        assert!(legacy_hash.chars().all(|c| c.is_ascii_hexdigit()), "Should be hex string");
+
+        // Verify password verification works with legacy hashes
+        assert!(PasswordHasher::verify_password("password", &legacy_hash), "Legacy password verification should succeed");
+        assert!(!PasswordHasher::verify_password("wrong", &legacy_hash), "Wrong password should fail");
+    }
+
+    #[test]
+    fn test_password_hash_format_detection() {
+        let argon2_hash = PasswordHasher::hash_password("test");
+        assert!(PasswordHasher::is_argon2_hash(&argon2_hash));
+        assert!(!PasswordHasher::is_sha256_hash(&argon2_hash));
+
+        #[allow(deprecated)]
+        let sha256_hash = PasswordHasher::hash_password_sha256("test");
+        assert!(!PasswordHasher::is_argon2_hash(&sha256_hash));
+        assert!(PasswordHasher::is_sha256_hash(&sha256_hash));
+
+        let invalid_hash = "not_a_real_hash";
+        assert!(!PasswordHasher::is_argon2_hash(invalid_hash));
+        assert!(!PasswordHasher::is_sha256_hash(invalid_hash));
+    }
+
+    #[test]
+    fn test_argon2_unique_salts() {
+        let password = "same_password";
+        let hash1 = PasswordHasher::hash_password(password);
+        let hash2 = PasswordHasher::hash_password(password);
+
+        // Same password should produce different hashes due to unique salts
+        assert_ne!(hash1, hash2, "Each hash should have a unique salt");
+
+        // But both should verify correctly
+        assert!(PasswordHasher::verify_password(password, &hash1));
+        assert!(PasswordHasher::verify_password(password, &hash2));
     }
 }

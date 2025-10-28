@@ -1,6 +1,9 @@
 //! Rust IRC Daemon Modules
-//! 
+//!
 //! This crate provides modules and extensions for the IRC daemon.
+
+// Deny unwrap usage in production code, but allow in tests
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod channel;
 pub mod ircv3;

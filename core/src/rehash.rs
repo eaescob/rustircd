@@ -71,10 +71,13 @@ impl RehashService {
         if config.security.tls.key_file.is_none() {
             return Err(Error::Config("TLS key file not specified".to_string()));
         }
-        
+
         // Check if certificate and key files exist
-        let cert_file = config.security.tls.cert_file.as_ref().unwrap();
-        let key_file = config.security.tls.key_file.as_ref().unwrap();
+        // SAFETY: We already checked both are Some() above
+        let cert_file = config.security.tls.cert_file.as_ref()
+            .ok_or_else(|| Error::Config("TLS certificate file not specified".to_string()))?;
+        let key_file = config.security.tls.key_file.as_ref()
+            .ok_or_else(|| Error::Config("TLS key file not specified".to_string()))?;
         
         if !Path::new(cert_file).exists() {
             return Err(Error::Config(format!("TLS certificate file not found: {}", cert_file)));

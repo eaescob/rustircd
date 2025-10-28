@@ -108,8 +108,10 @@ pub mod string {
         if name.is_empty() {
             return false;
         }
-        
-        let first_char = name.chars().next().unwrap();
+
+        let Some(first_char) = name.chars().next() else {
+            return false;
+        };
         if !"#&+!".contains(first_char) {
             return false;
         }

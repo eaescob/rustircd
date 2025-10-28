@@ -142,26 +142,38 @@ lazy_static! {
 
 /// Register a custom user mode globally
 pub fn register_custom_mode(mode: CustomUserMode) -> Result<(), String> {
-    let mut registry = MODE_REGISTRY.write().unwrap();
+    let mut registry = MODE_REGISTRY.write()
+        .map_err(|e| format!("Lock poisoned: {}", e))?;
     registry.register_mode(mode)
 }
 
 /// Unregister a custom user mode globally
 pub fn unregister_custom_mode(character: char, module_name: &str) -> Result<(), String> {
-    let mut registry = MODE_REGISTRY.write().unwrap();
+    let mut registry = MODE_REGISTRY.write()
+        .map_err(|e| format!("Lock poisoned: {}", e))?;
     registry.unregister_mode(character, module_name)
 }
 
 /// Check if a character is a valid user mode (core or custom)
 pub fn is_valid_user_mode(character: char) -> bool {
-    let registry = MODE_REGISTRY.read().unwrap();
-    registry.is_valid_mode(character)
+    match MODE_REGISTRY.read() {
+        Ok(registry) => registry.is_valid_mode(character),
+        Err(e) => {
+            tracing::error!("Lock poisoned in is_valid_user_mode: {}", e);
+            false
+        }
+    }
 }
 
 /// Get information about a custom mode
 pub fn get_custom_mode(character: char) -> Option<CustomUserMode> {
-    let registry = MODE_REGISTRY.read().unwrap();
-    registry.get_mode(character).cloned()
+    match MODE_REGISTRY.read() {
+        Ok(registry) => registry.get_mode(character).cloned(),
+        Err(e) => {
+            tracing::error!("Lock poisoned in get_custom_mode: {}", e);
+            None
+        }
+    }
 }
 
 /// Validate a custom mode change
@@ -172,20 +184,31 @@ pub fn validate_custom_mode_change(
     requesting_user: &str,
     requesting_user_is_operator: bool,
 ) -> Result<(), String> {
-    let registry = MODE_REGISTRY.read().unwrap();
+    let registry = MODE_REGISTRY.read()
+        .map_err(|e| format!("Lock poisoned: {}", e))?;
     registry.validate_mode_change(character, adding, target_user, requesting_user, requesting_user_is_operator)
 }
 
 /// Get all custom modes
 pub fn get_all_custom_modes() -> Vec<CustomUserMode> {
-    let registry = MODE_REGISTRY.read().unwrap();
-    registry.get_all_modes().into_iter().cloned().collect()
+    match MODE_REGISTRY.read() {
+        Ok(registry) => registry.get_all_modes().into_iter().cloned().collect(),
+        Err(e) => {
+            tracing::error!("Lock poisoned in get_all_custom_modes: {}", e);
+            Vec::new()
+        }
+    }
 }
 
 /// Get custom modes by module
 pub fn get_custom_modes_by_module(module_name: &str) -> Vec<CustomUserMode> {
-    let registry = MODE_REGISTRY.read().unwrap();
-    registry.get_modes_by_module(module_name).into_iter().cloned().collect()
+    match MODE_REGISTRY.read() {
+        Ok(registry) => registry.get_modes_by_module(module_name).into_iter().cloned().collect(),
+        Err(e) => {
+            tracing::error!("Lock poisoned in get_custom_modes_by_module: {}", e);
+            Vec::new()
+        }
+    }
 }
 
 #[cfg(test)]

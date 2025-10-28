@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "modules", "services"]
+members = ["core", "modules", "services", "tools/mkpasswd"]
 resolver = "2"
 
 [workspace.package]

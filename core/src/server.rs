@@ -824,10 +824,18 @@ impl Server {
         
         // Create a new server connection object
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        // Parse addresses with fallback to unspecified address
+        let remote_socket = remote_addr.parse()
+            .or_else(|_| "0.0.0.0:0".parse())
+            .map_err(|e| Error::Connection(format!("Invalid remote address: {}", e)))?;
+        let local_socket = local_addr.parse()
+            .or_else(|_| "0.0.0.0:0".parse())
+            .map_err(|e| Error::Connection(format!("Invalid local address: {}", e)))?;
+
         let server_connection = crate::server_connection::ServerConnection::new(
             client_id,
-            remote_addr.parse().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap()),
-            local_addr.parse().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap()),
+            remote_socket,
+            local_socket,
             tx,
             false, // incoming connection
         );
@@ -2238,9 +2246,11 @@ impl Server {
         if nick.is_empty() || nick.len() > self.config.server.max_nickname_length {
             return false;
         }
-        
+
         // First character must be letter or special character
-        let first_char = nick.chars().next().unwrap();
+        let Some(first_char) = nick.chars().next() else {
+            return false;
+        };
         if !first_char.is_ascii_alphabetic() && !"[]\\`_^{|}~".contains(first_char) {
             return false;
         }
@@ -3255,7 +3265,8 @@ impl Server {
 
         // Check if user is an operator with CONNECT privileges
         if self.config.security.server_security.require_oper_for_connect {
-            let user = client.user.as_ref().unwrap();
+            let user = client.user.as_ref()
+                .ok_or_else(|| Error::User("User not registered".to_string()))?;
             if !user.is_operator {
                 let error_msg = NumericReply::no_privileges();
                 let _ = client.send(error_msg);
@@ -3306,19 +3317,24 @@ impl Server {
             return Ok(());
         }
 
+        // Get user nick for logging
+        let user_nick = client.user.as_ref()
+            .map(|u| u.nick.as_str())
+            .unwrap_or("<unknown>");
+
         // Attempt to connect to the target server
         match self.connect_to_server(target_server, target_port).await {
             Ok(_) => {
                 let success_msg = NumericReply::connect_success(target_server, target_port);
                 let _ = client.send(success_msg);
-                tracing::info!("Remote CONNECT from {} to {}:{} successful", 
-                    client.user.as_ref().unwrap().nick, target_server, target_port);
+                tracing::info!("Remote CONNECT from {} to {}:{} successful",
+                    user_nick, target_server, target_port);
             }
             Err(e) => {
                 let error_msg = NumericReply::connect_failed(target_server, &e.to_string());
                 let _ = client.send(error_msg);
-                tracing::warn!("Remote CONNECT from {} to {}:{} failed: {}", 
-                    client.user.as_ref().unwrap().nick, target_server, target_port, e);
+                tracing::warn!("Remote CONNECT from {} to {}:{} failed: {}",
+                    user_nick, target_server, target_port, e);
             }
         }
 
@@ -3747,7 +3763,8 @@ impl Server {
         let reason = message.params.get(1).map(|s| s.as_str()).unwrap_or("Operator requested");
 
         // Check if user is an operator
-        let user = client.user.as_ref().unwrap();
+        let user = client.user.as_ref()
+            .ok_or_else(|| Error::User("User not registered".to_string()))?;
         if !user.is_operator {
             let error_msg = NumericReply::no_privileges();
             let _ = client.send(error_msg);

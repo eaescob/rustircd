@@ -1,7 +1,6 @@
 //! Integration tests for RustIRCd core functionality
 
 use rustircd_core::*;
-use std::sync::Arc;
 use tokio;
 use uuid::Uuid;
 
@@ -44,13 +43,13 @@ async fn test_database_operations() {
     // Test user update
     let mut updated_user = user.clone();
     updated_user.nick = "alice2".to_string();
-    assert!(db.update_user(updated_user.clone()).is_ok());
-    
+    assert!(db.update_user(&user_id, updated_user.clone()).is_ok());
+
     let by_new_nick = db.get_user_by_nick("alice2");
     assert!(by_new_nick.is_some());
-    
+
     // Test user removal
-    assert!(db.remove_user(&user_id).is_ok());
+    assert!(db.remove_user(user_id).is_ok());
     assert!(db.get_user(&user_id).is_none());
 }
 
@@ -73,8 +72,9 @@ async fn test_server_info_management() {
     let retrieved = db.get_server("test.server");
     assert!(retrieved.is_some());
     assert_eq!(retrieved.unwrap().description, "Test Server");
-    
-    assert!(db.remove_server("test.server").is_ok());
+
+    let removed = db.remove_server("test.server");
+    assert!(removed.is_some());
     assert!(db.get_server("test.server").is_none());
 }
 
@@ -91,23 +91,22 @@ async fn test_channel_operations() {
     };
     
     assert!(db.add_channel(channel_info.clone()).is_ok());
-    
-    let retrieved = db.get_channel("#test");
-    assert!(retrieved.is_some());
-    assert_eq!(retrieved.unwrap().topic, Some("Test Topic".to_string()));
-    
+
+    // Note: get_channel method doesn't exist in current API
+    // We can only test channel membership
+
     // Add user to channel
     assert!(db.add_user_to_channel("alice", "#test").is_ok());
-    
+
     let user_channels = db.get_user_channels("alice");
-    assert!(user_channels.contains("#test"));
-    
-    let channel_members = db.get_channel_members("#test");
-    assert!(channel_members.contains("alice"));
+    assert!(user_channels.contains(&"#test".to_string()));
+
+    let channel_members = db.get_channel_users("#test");
+    assert!(channel_members.contains(&"alice".to_string()));
     
     // Remove user from channel
     assert!(db.remove_user_from_channel("alice", "#test").is_ok());
-    assert!(!db.get_user_channels("alice").contains("#test"));
+    assert!(!db.get_user_channels("alice").contains(&"#test".to_string()));
 }
 
 #[tokio::test]
@@ -188,19 +187,19 @@ async fn test_user_modes() {
     );
     
     // Test mode setting
-    user.set_mode(UserMode::Invisible, true);
+    user.add_mode('i');
     assert!(user.has_mode('i'));
 
-    user.set_mode(UserMode::ServerNotices, true);
+    user.add_mode('s');
     assert!(user.has_mode('s'));
-    
+
     // Test mode unsetting
-    user.set_mode(UserMode::Invisible, false);
+    user.remove_mode('i');
     assert!(!user.has_mode('i'));
-    
+
     // Test operator mode
     assert!(!user.is_operator);
-    user.set_mode(UserMode::Operator, true);
+    user.add_mode('o');
     assert!(user.has_mode('o'));
 }
 
@@ -352,6 +351,7 @@ async fn test_validation_functions() {
 #[tokio::test]
 async fn test_throttling_manager() {
     use crate::config::ThrottlingConfig;
+    use std::net::IpAddr;
 
     let config = ThrottlingConfig {
         enabled: true,
@@ -359,18 +359,20 @@ async fn test_throttling_manager() {
         time_window_seconds: 60,
         initial_throttle_seconds: 10,
         max_stages: 5,
+        stage_factor: 2,
+        cleanup_interval_seconds: 300,
     };
 
     let throttling = ThrottlingManager::new(config);
-    let ip = "192.168.1.1".to_string();
+    let ip: IpAddr = "192.168.1.1".parse().unwrap();
 
     // First connections should be allowed
-    assert!(throttling.check_connection_allowed(&ip).is_ok());
-    assert!(throttling.check_connection_allowed(&ip).is_ok());
-    assert!(throttling.check_connection_allowed(&ip).is_ok());
+    assert!(throttling.check_connection_allowed(ip).await.unwrap());
+    assert!(throttling.check_connection_allowed(ip).await.unwrap());
+    assert!(throttling.check_connection_allowed(ip).await.unwrap());
 
     // Fourth connection should be throttled
-    assert!(throttling.check_connection_allowed(&ip).is_err());
+    assert!(!throttling.check_connection_allowed(ip).await.unwrap());
 }
 
 #[tokio::test]

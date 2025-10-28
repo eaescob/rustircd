@@ -1,6 +1,9 @@
 //! Rust IRC Daemon Services Framework
-//! 
+//!
 //! This crate provides a framework for implementing IRC services.
+
+// Deny unwrap usage in production code, but allow in tests
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod framework;
 pub mod example;

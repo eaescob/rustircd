@@ -1,0 +1,18 @@
+[package]
+name = "rustircd-mkpasswd"
+version = "0.1.0"
+edition = "2021"
+authors = ["Emilio Escobar <emilio@example.com>"]
+license = "MIT"
+description = "Password hashing utility for RustIRCD using Argon2"
+
+[[bin]]
+name = "mkpasswd"
+path = "src/main.rs"
+
+[dependencies]
+argon2 = { version = "0.5", features = ["std"] }
+clap = { version = "4.0", features = ["derive"] }
+anyhow = "1.0"
+rpassword = "7.3"
+rand = "0.8"

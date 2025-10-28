@@ -220,11 +220,15 @@ impl SaslMechanism for PlainMechanism {
         };
         
         tracing::info!("SASL PLAIN authentication attempt for user: {}", username);
-        
+
+        // SECURITY: Authentication is performed by the AuthManager which delegates to
+        // configured providers (services, database, LDAP, Supabase, etc.).
+        // If no providers are configured or all providers reject the credentials,
+        // authentication FAILS. There is NO default acceptance behavior.
         match self.auth_manager.authenticate(&auth_request).await? {
             rustircd_core::AuthResult::Success(auth_info) => {
                 tracing::info!("SASL PLAIN authentication successful for user: {}", auth_info.username);
-                
+
                 Ok(SaslResponse {
                     response_type: SaslResponseType::Success,
                     data: None,
@@ -233,7 +237,7 @@ impl SaslMechanism for PlainMechanism {
             }
             rustircd_core::AuthResult::Failure(reason) => {
                 tracing::warn!("SASL PLAIN authentication failed for user {}: {}", username, reason);
-                
+
                 Ok(SaslResponse {
                     response_type: SaslResponseType::Failure,
                     data: None,
@@ -336,7 +340,7 @@ impl SaslModule {
     /// Create a new SASL module
     pub fn new(config: SaslConfig, auth_manager: std::sync::Arc<AuthManager>) -> Self {
         let mut mechanisms: Vec<Box<dyn SaslMechanism>> = Vec::new();
-        
+
         // Add supported mechanisms
         if config.mechanisms.contains(&"PLAIN".to_string()) {
             mechanisms.push(Box::new(PlainMechanism::new(config.sasl_service.clone(), auth_manager.clone())));
@@ -344,13 +348,43 @@ impl SaslModule {
         if config.mechanisms.contains(&"EXTERNAL".to_string()) {
             mechanisms.push(Box::new(ExternalMechanism::new(config.sasl_service.clone(), auth_manager.clone())));
         }
-        
+
         Self {
             config,
             sessions: std::sync::Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             mechanisms,
             auth_manager,
         }
+    }
+
+    /// Validate that SASL can function properly
+    ///
+    /// Returns an error if SASL is enabled but no authentication providers are configured.
+    /// This prevents the security issue of SASL appearing to work but not actually
+    /// validating credentials.
+    pub async fn validate(&self) -> Result<()> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+
+        // Check if any authentication providers are registered
+        if !self.auth_manager.has_providers().await {
+            return Err(Error::Config(
+                "SASL is enabled but no authentication providers are configured. \
+                 Please configure at least one authentication backend (services, database, LDAP, Supabase, etc.)".to_string()
+            ));
+        }
+
+        // Check if any providers are actually available
+        if !self.auth_manager.has_available_providers().await {
+            tracing::warn!(
+                "SASL is enabled but no authentication providers are currently available. \
+                 Authentication will fail until at least one provider becomes available."
+            );
+        }
+
+        tracing::info!("SASL module validated successfully with authentication providers");
+        Ok(())
     }
     
     /// Validate that a SASL message comes from the correct service

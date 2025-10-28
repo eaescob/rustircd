@@ -203,7 +203,9 @@ impl NetworkQueryManager {
         let timeout = self.default_timeout;
 
         tokio::spawn(async move {
-            tokio::time::sleep(timeout.to_std().unwrap()).await;
+            // Convert chrono duration to std duration, falling back to a default if it fails
+            let std_timeout = timeout.to_std().unwrap_or(std::time::Duration::from_secs(30));
+            tokio::time::sleep(std_timeout).await;
             
             let mut queries = queries.write().await;
             if let Some(pending_query) = queries.get(&request_id) {

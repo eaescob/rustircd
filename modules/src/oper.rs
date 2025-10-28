@@ -5,6 +5,7 @@
 
 use rustircd_core::{User, Message, Client, Result, Error, NumericReply, Config, ModuleNumericManager, module::{ModuleContext, ModuleResult, ModuleStatsResponse}};
 use rustircd_core::config::OperatorFlag;
+use rustircd_core::audit::{AuditEvent, AuditEventType, AuditLogger};
 use std::collections::HashSet;
 use uuid::Uuid;
 use async_trait::async_trait;
@@ -14,6 +15,8 @@ use tracing::info;
 pub struct OperModule {
     /// Module configuration
     config: OperConfig,
+    /// Audit logger for security events
+    audit_logger: AuditLogger,
 }
 
 /// Configuration for the oper module
@@ -27,6 +30,10 @@ pub struct OperConfig {
     pub show_server_details_in_stats: bool,
     /// Whether to log operator actions
     pub log_operator_actions: bool,
+    /// Audit logging enabled
+    pub audit_enabled: bool,
+    /// Audit log minimum level (0 = all, 1 = info+, 2 = warn+)
+    pub audit_min_level: u8,
 }
 
 impl Default for OperConfig {
@@ -36,6 +43,8 @@ impl Default for OperConfig {
             require_oper_for_connect: true,
             show_server_details_in_stats: true,
             log_operator_actions: true,
+            audit_enabled: true,
+            audit_min_level: 0, // Log all security events by default
         }
     }
 }
@@ -43,7 +52,11 @@ impl Default for OperConfig {
 impl OperModule {
     /// Create a new oper module
     pub fn new(config: OperConfig) -> Self {
-        Self { config }
+        let audit_logger = AuditLogger::new(config.audit_enabled, config.audit_min_level);
+        Self {
+            config,
+            audit_logger,
+        }
     }
     
     /// Handle OPER command with full database access
@@ -79,32 +92,54 @@ impl OperModule {
                 for flag in &operator_config.flags {
                     operator_flags.insert(*flag);
                 }
-                
+
                 // Grant operator privileges (this will set the +o mode securely)
                 user.set_operator_flags(operator_flags.clone());
-                
+
                 // Update user in database
                 context.update_user(user.clone())?;
-                
-                info!("Operator {} successfully authenticated with flags: {:?}", 
+
+                info!("Operator {} successfully authenticated with flags: {:?}",
                       user.nick, operator_flags);
-                
+
+                // Audit log successful operator authentication
+                let audit_event = AuditEvent::new(AuditEventType::OperAuth)
+                    .with_user(&user.nick)
+                    .with_user_id(user.id)
+                    .with_username(&user.username)
+                    .with_hostname(&user.host)
+                    .with_ip(host)
+                    .with_method("OPER")
+                    .with_metadata("flags", format!("{:?}", operator_flags))
+                    .with_metadata("oper_name", operator_config.nickname.clone());
+                self.audit_logger.log(&audit_event);
+
                 // Send success message
                 let success_msg = NumericReply::youre_oper();
                 let _ = client.send(success_msg);
-                
+
                 // Send operator privileges information
                 self.send_operator_privileges(client, &operator_flags).await?;
-                
+
                 if self.config.log_operator_actions {
-                    tracing::info!("User {} authenticated as operator with flags: {:?}", 
+                    tracing::info!("User {} authenticated as operator with flags: {:?}",
                         user.nick, operator_flags);
                 }
             } else {
                 // User not found in database
                 let error_msg = NumericReply::password_mismatch();
                 let _ = client.send(error_msg);
-                
+
+                // Audit log failed authentication - user not in database
+                let audit_event = AuditEvent::new(AuditEventType::OperAuthFailure)
+                    .with_user(oper_name)
+                    .with_username(username)
+                    .with_ip(host)
+                    .with_method("OPER")
+                    .with_error("User not found in database")
+                    .with_reason("Invalid operator credentials");
+                self.audit_logger.log(&audit_event);
+
                 if self.config.log_operator_actions {
                     tracing::warn!("Failed operator authentication - user not in database: {}", oper_name);
                 }
@@ -113,9 +148,19 @@ impl OperModule {
             // Authentication failed
             let error_msg = NumericReply::password_mismatch();
             let _ = client.send(error_msg);
-            
+
+            // Audit log failed authentication
+            let audit_event = AuditEvent::new(AuditEventType::OperAuthFailure)
+                .with_user(oper_name)
+                .with_username(username)
+                .with_ip(host)
+                .with_method("OPER")
+                .with_error("Invalid credentials")
+                .with_reason("Operator authentication failed - invalid username, password, or hostmask");
+            self.audit_logger.log(&audit_event);
+
             if self.config.log_operator_actions {
-                tracing::warn!("Failed operator authentication attempt for user {} from {}", 
+                tracing::warn!("Failed operator authentication attempt for user {} from {}",
                     oper_name, host);
             }
         }
@@ -185,7 +230,55 @@ impl OperModule {
     pub fn is_spy(&self, user: &User) -> bool {
         user.is_spy()
     }
-    
+
+    /// Check operator action with audit logging
+    /// Returns true if user is authorized, false otherwise
+    pub fn check_operator_action(&self, user: &User, action: OperatorAction, command: &str) -> bool {
+        let can_perform = match action {
+            OperatorAction::RemoteConnect => self.can_remote_connect(user),
+            OperatorAction::LocalConnect => self.can_local_connect(user),
+            OperatorAction::Squit => self.can_squit(user),
+            OperatorAction::Administrator => self.is_administrator(user),
+            OperatorAction::Spy => self.is_spy(user),
+            OperatorAction::AnyOperator => self.has_operator_privileges(user),
+        };
+
+        if can_perform {
+            // Log successful authorization (debug level, not a security concern)
+            let audit_event = AuditEvent::new(AuditEventType::AuthzSuccess)
+                .with_user(&user.nick)
+                .with_user_id(user.id)
+                .with_username(&user.username)
+                .with_hostname(&user.host)
+                .with_command(command)
+                .with_metadata("action", format!("{:?}", action));
+            self.audit_logger.log(&audit_event);
+        } else {
+            // Log authorization failure (security concern - warning level)
+            let flag_name = match action {
+                OperatorAction::RemoteConnect => "RemoteConnect",
+                OperatorAction::LocalConnect => "LocalConnect",
+                OperatorAction::Squit => "Squit",
+                OperatorAction::Administrator => "Administrator",
+                OperatorAction::Spy => "Spy",
+                OperatorAction::AnyOperator => "Operator",
+            };
+
+            let audit_event = AuditEvent::new(AuditEventType::AuthzFailure)
+                .with_user(&user.nick)
+                .with_user_id(user.id)
+                .with_username(&user.username)
+                .with_hostname(&user.host)
+                .with_command(command)
+                .with_required_flag(flag_name)
+                .with_error("Insufficient privileges")
+                .with_reason(format!("User attempted {} without required privileges", command));
+            self.audit_logger.log(&audit_event);
+        }
+
+        can_perform
+    }
+
     /// Get operator information for STATS command
     pub fn get_operator_stats(&self, user: &User, requesting_user: Option<&User>) -> Option<String> {
         if !user.is_operator() {
@@ -293,11 +386,47 @@ impl OperModule {
     
     /// Revoke operator privileges for a user
     pub fn revoke_operator_privileges(&self, user: &mut User) {
+        // Audit log privilege revocation
+        let audit_event = AuditEvent::new(AuditEventType::OperPrivilegeRevoke)
+            .with_user(&user.nick)
+            .with_user_id(user.id)
+            .with_username(&user.username)
+            .with_hostname(&user.host)
+            .with_reason("Operator privileges revoked");
+        self.audit_logger.log(&audit_event);
+
         user.revoke_operator_privileges();
+    }
+
+    /// Grant operator privileges (internal helper for audit logging)
+    fn log_privilege_grant(&self, user: &User, flags: &HashSet<OperatorFlag>) {
+        let audit_event = AuditEvent::new(AuditEventType::OperPrivilegeGrant)
+            .with_user(&user.nick)
+            .with_user_id(user.id)
+            .with_username(&user.username)
+            .with_hostname(&user.host)
+            .with_metadata("flags", format!("{:?}", flags))
+            .with_reason("Operator privileges granted");
+        self.audit_logger.log(&audit_event);
     }
     
     /// Log operator action
     pub fn log_operator_action(&self, user: &User, action: &str, details: Option<&str>) {
+        // Create audit event
+        let mut audit_event = AuditEvent::new(AuditEventType::OperAction)
+            .with_user(&user.nick)
+            .with_user_id(user.id)
+            .with_username(&user.username)
+            .with_hostname(&user.host)
+            .with_command(action);
+
+        if let Some(details) = details {
+            audit_event = audit_event.with_reason(details);
+        }
+
+        self.audit_logger.log(&audit_event);
+
+        // Legacy logging for backward compatibility
         if self.config.log_operator_actions {
             if let Some(details) = details {
                 tracing::info!("Operator {} performed {}: {}", user.nick, action, details);
@@ -362,7 +491,7 @@ impl OperatorChecker {
     pub fn new(oper_module: OperModule) -> Self {
         Self { oper_module }
     }
-    
+
     /// Check if user can perform an action that requires operator privileges
     pub fn can_perform_action(&self, user: &User, action: OperatorAction) -> bool {
         match action {
@@ -374,7 +503,42 @@ impl OperatorChecker {
             OperatorAction::AnyOperator => self.oper_module.has_operator_privileges(user),
         }
     }
-    
+
+    /// Check and log if user can perform an action
+    pub fn check_and_log(&self, user: &User, action: OperatorAction, command: &str) -> bool {
+        let can_perform = self.can_perform_action(user, action);
+
+        if can_perform {
+            // Log successful authorization
+            let audit_event = AuditEvent::new(AuditEventType::AuthzSuccess)
+                .with_user(&user.nick)
+                .with_user_id(user.id)
+                .with_username(&user.username)
+                .with_hostname(&user.host)
+                .with_command(command)
+                .with_metadata("action", format!("{:?}", action));
+            self.oper_module.audit_logger.log(&audit_event);
+        } else {
+            // Log authorization failure
+            let flag_name = self.get_required_flag(action)
+                .map(|f| format!("{:?}", f))
+                .unwrap_or_else(|| "operator".to_string());
+
+            let audit_event = AuditEvent::new(AuditEventType::AuthzFailure)
+                .with_user(&user.nick)
+                .with_user_id(user.id)
+                .with_username(&user.username)
+                .with_hostname(&user.host)
+                .with_command(command)
+                .with_required_flag(&flag_name)
+                .with_error("Insufficient privileges")
+                .with_reason(format!("User attempted {} without required flag", command));
+            self.oper_module.audit_logger.log(&audit_event);
+        }
+
+        can_perform
+    }
+
     /// Get required operator flag for an action
     pub fn get_required_flag(&self, action: OperatorAction) -> Option<OperatorFlag> {
         match action {

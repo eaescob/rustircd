@@ -5,6 +5,7 @@
 //! external authentication systems.
 
 use crate::{Result, Error};
+use crate::audit::{AuditEvent, AuditEventType, AuditLogger};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -131,6 +132,8 @@ pub struct AuthManager {
     auth_cache: Arc<RwLock<HashMap<Uuid, (AuthInfo, chrono::DateTime<chrono::Utc>)>>>,
     /// Cache TTL in seconds
     cache_ttl: u64,
+    /// Audit logger for security events
+    audit_logger: AuditLogger,
 }
 
 impl AuthManager {
@@ -142,6 +145,19 @@ impl AuthManager {
             fallback_providers: Arc::new(RwLock::new(Vec::new())),
             auth_cache: Arc::new(RwLock::new(HashMap::new())),
             cache_ttl,
+            audit_logger: AuditLogger::default(),
+        }
+    }
+
+    /// Create a new authentication manager with audit logger
+    pub fn with_audit_logger(cache_ttl: u64, audit_logger: AuditLogger) -> Self {
+        Self {
+            providers: Arc::new(RwLock::new(HashMap::new())),
+            primary_provider: Arc::new(RwLock::new(None)),
+            fallback_providers: Arc::new(RwLock::new(Vec::new())),
+            auth_cache: Arc::new(RwLock::new(HashMap::new())),
+            cache_ttl,
+            audit_logger,
         }
     }
     
@@ -274,16 +290,50 @@ impl AuthManager {
                 if provider.is_available().await {
                     match provider.authenticate(request).await {
                         Ok(AuthResult::Success(auth_info)) => {
+                            // Audit log successful authentication
+                            let audit_event = AuditEvent::new(AuditEventType::AuthSuccess)
+                                .with_user(&request.username)
+                                .with_user_id(request.client_info.id)
+                                .with_ip(&request.client_info.ip)
+                                .with_hostname(request.client_info.hostname.as_deref().unwrap_or("unknown"))
+                                .with_method(&auth_info.provider)
+                                .with_secure(request.client_info.secure)
+                                .with_metadata("provider", auth_info.provider.clone());
+                            self.audit_logger.log(&audit_event);
+
                             // Cache successful authentication
                             self.cache_auth(request.client_info.id, &auth_info).await;
                             return Ok(AuthResult::Success(auth_info));
                         }
+                        Ok(AuthResult::Challenge(ref challenge)) => {
+                            // Audit log challenge event
+                            let audit_event = AuditEvent::new(AuditEventType::AuthChallenge)
+                                .with_user(&request.username)
+                                .with_user_id(request.client_info.id)
+                                .with_ip(&request.client_info.ip)
+                                .with_method(&primary_name)
+                                .with_reason(challenge);
+                            self.audit_logger.log(&audit_event);
+
+                            return Ok(AuthResult::Challenge(challenge.clone()));
+                        }
                         Ok(result) => {
-                            // Challenge or in progress, return as-is
+                            // In progress, return as-is
                             return Ok(result);
                         }
                         Err(e) => {
                             tracing::warn!("Primary auth provider '{}' failed: {}", primary_name, e);
+
+                            // Audit log authentication failure
+                            let audit_event = AuditEvent::new(AuditEventType::AuthFailure)
+                                .with_user(&request.username)
+                                .with_user_id(request.client_info.id)
+                                .with_ip(&request.client_info.ip)
+                                .with_hostname(request.client_info.hostname.as_deref().unwrap_or("unknown"))
+                                .with_method(&primary_name)
+                                .with_secure(request.client_info.secure)
+                                .with_error(format!("{}", e));
+                            self.audit_logger.log(&audit_event);
                         }
                     }
                 }
@@ -297,6 +347,18 @@ impl AuthManager {
                 if provider.is_available().await {
                     match provider.authenticate(request).await {
                         Ok(AuthResult::Success(auth_info)) => {
+                            // Audit log successful authentication
+                            let audit_event = AuditEvent::new(AuditEventType::AuthSuccess)
+                                .with_user(&request.username)
+                                .with_user_id(request.client_info.id)
+                                .with_ip(&request.client_info.ip)
+                                .with_hostname(request.client_info.hostname.as_deref().unwrap_or("unknown"))
+                                .with_method(&auth_info.provider)
+                                .with_secure(request.client_info.secure)
+                                .with_metadata("provider", auth_info.provider.clone())
+                                .with_metadata("fallback", "true");
+                            self.audit_logger.log(&audit_event);
+
                             // Cache successful authentication
                             self.cache_auth(request.client_info.id, &auth_info).await;
                             return Ok(AuthResult::Success(auth_info));
@@ -307,13 +369,35 @@ impl AuthManager {
                         }
                         Err(e) => {
                             tracing::warn!("Fallback auth provider '{}' failed: {}", fallback, e);
+
+                            // Audit log authentication failure
+                            let audit_event = AuditEvent::new(AuditEventType::AuthFailure)
+                                .with_user(&request.username)
+                                .with_user_id(request.client_info.id)
+                                .with_ip(&request.client_info.ip)
+                                .with_hostname(request.client_info.hostname.as_deref().unwrap_or("unknown"))
+                                .with_method(fallback)
+                                .with_secure(request.client_info.secure)
+                                .with_error(format!("{}", e))
+                                .with_metadata("fallback", "true");
+                            self.audit_logger.log(&audit_event);
                         }
                     }
                 }
             }
         }
-        
-        // All providers failed
+
+        // All providers failed - audit log final failure
+        let audit_event = AuditEvent::new(AuditEventType::AuthFailure)
+            .with_user(&request.username)
+            .with_user_id(request.client_info.id)
+            .with_ip(&request.client_info.ip)
+            .with_hostname(request.client_info.hostname.as_deref().unwrap_or("unknown"))
+            .with_method("all_providers")
+            .with_secure(request.client_info.secure)
+            .with_error("Authentication failed with all providers");
+        self.audit_logger.log(&audit_event);
+
         Ok(AuthResult::Failure("Authentication failed with all providers".to_string()))
     }
     
@@ -365,7 +449,24 @@ impl AuthManager {
         let providers = self.providers.read().await;
         providers.keys().cloned().collect()
     }
-    
+
+    /// Check if any authentication providers are registered
+    pub async fn has_providers(&self) -> bool {
+        let providers = self.providers.read().await;
+        !providers.is_empty()
+    }
+
+    /// Check if any authentication providers are available (registered and enabled)
+    pub async fn has_available_providers(&self) -> bool {
+        let providers = self.providers.read().await;
+        for provider in providers.values() {
+            if provider.is_available().await {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Get provider capabilities
     pub async fn get_provider_capabilities(&self, name: &str) -> Option<AuthProviderCapabilities> {
         if let Some(provider) = self.get_provider(name).await {

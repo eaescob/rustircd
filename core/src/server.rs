@@ -56,8 +56,8 @@ pub struct Server {
     lookup_service: Arc<LookupService>,
     /// Rehash service for runtime configuration reloading
     rehash_service: Arc<RehashService>,
-    /// TLS acceptor (if enabled)
-    tls_acceptor: Option<TlsAcceptor>,
+    /// TLS acceptor (if enabled) - wrapped in Arc<RwLock> to allow runtime updates
+    tls_acceptor: Arc<RwLock<Option<TlsAcceptor>>>,
     /// Replies configuration
     #[allow(dead_code)]
     replies_config: Option<crate::RepliesConfig>,
@@ -180,7 +180,7 @@ impl Server {
             motd_manager,
             lookup_service,
             rehash_service,
-            tls_acceptor: None,
+            tls_acceptor: Arc::new(RwLock::new(None)),
             replies_config: config.replies.clone(),
         }
     }
@@ -212,7 +212,7 @@ impl Server {
     }
     
     /// Setup TLS configuration
-    async fn setup_tls(&mut self) -> Result<()> {
+    async fn setup_tls(&self) -> Result<()> {
         let cert_file = self.config.security.tls.cert_file.as_ref()
             .ok_or_else(|| Error::Config("TLS certificate file not specified".to_string()))?;
         let key_file = self.config.security.tls.key_file.as_ref()
@@ -238,9 +238,11 @@ impl Server {
         
         // Log TLS version configuration
         tracing::info!("TLS version configured: {}", self.config.security.tls.version);
-        
-        self.tls_acceptor = Some(TlsAcceptor::from(Arc::new(tls_config)));
-        
+
+        // Update the TLS acceptor - acquire write lock to update shared reference
+        let mut tls_acceptor = self.tls_acceptor.write().await;
+        *tls_acceptor = Some(TlsAcceptor::from(Arc::new(tls_config)));
+
         tracing::info!("TLS configuration loaded");
         Ok(())
     }
@@ -587,13 +589,14 @@ impl Server {
         let port = port_config.port;
         let connection_type = port_config.connection_type.clone();
         let tls_enabled = port_config.tls;
-        let tls_acceptor = if tls_enabled { self.tls_acceptor.clone() } else { None };
+        // Clone the Arc reference to the shared TLS acceptor
+        let tls_acceptor_ref = self.tls_acceptor.clone();
         let connection_handler = self.connection_handler.clone();
         let description = port_config.description.clone().unwrap_or_else(|| "Unnamed port".to_string());
-        
-        tracing::info!("Starting listener on port {} ({}) - TLS: {}, Type: {:?}", 
+
+        tracing::info!("Starting listener on port {} ({}) - TLS: {}, Type: {:?}",
                       port, description, tls_enabled, connection_type);
-        
+
         // Spawn connection handler for this port
         let throttling_manager = self.throttling_manager.clone();
         let statistics_manager = self.statistics_manager.clone();
@@ -605,7 +608,7 @@ impl Server {
                         // Determine connection type based on port configuration
                         let is_client_connection = matches!(connection_type, crate::config::PortConnectionType::Client | crate::config::PortConnectionType::Both);
                         let is_server_connection = matches!(connection_type, crate::config::PortConnectionType::Server | crate::config::PortConnectionType::Both);
-                        
+
                         // Check throttling for client connections
                         if is_client_connection && !is_server_connection {
                             match throttling_manager.check_connection_allowed(addr.ip()).await {
@@ -622,16 +625,24 @@ impl Server {
                                     continue;
                                 }
                             }
-                            
+
                             // Record connection statistics
                             statistics_manager.record_connection().await;
                         } else if is_server_connection && !is_client_connection {
                             // Record server connection statistics
                             statistics_manager.record_server_connection().await;
                         }
-                        
+
+                        // Get the current TLS acceptor (if TLS is enabled for this port)
+                        let tls_acceptor = if tls_enabled {
+                            // Acquire read lock and clone the current TLS acceptor
+                            tls_acceptor_ref.read().await.clone()
+                        } else {
+                            None
+                        };
+
                         let mut conn_handler = connection_handler.write().await;
-                        if let Err(e) = conn_handler.handle_connection_with_type(stream, addr, tls_acceptor.clone(), is_client_connection, is_server_connection, Some(&lookup_service)).await {
+                        if let Err(e) = conn_handler.handle_connection_with_type(stream, addr, tls_acceptor, is_client_connection, is_server_connection, Some(&lookup_service)).await {
                             tracing::error!("Error handling connection from {}: {}", addr, e);
                         }
                     }
@@ -4356,7 +4367,7 @@ impl Server {
     }
     
     /// Reload TLS configuration
-    pub async fn reload_tls(&mut self) -> Result<()> {
+    pub async fn reload_tls(&self) -> Result<()> {
         if !self.config.security.tls.enabled {
             warn!("TLS is not enabled, skipping TLS reload");
             return Ok(());

@@ -196,16 +196,21 @@ impl AdminModule {
             match parameter.as_str() {
                 "SSL" => {
                     client.send_numeric(NumericReply::RplLocops, &["REHASH SSL: Reloading TLS settings..."])?;
-                    
+
                     // First validate the configuration
                     match server.rehash_service().reload_ssl().await {
                         Ok(_) => {
                             // If validation passes, reload the actual TLS configuration
-                            // Note: This requires a mutable reference to the server, which we don't have here
-                            // For now, we'll just report validation success
-                            client.send_numeric(NumericReply::RplLocops, &["REHASH SSL: TLS configuration validated successfully"])?;
-                            client.send_numeric(NumericReply::RplLocops, &["REHASH SSL: Note - TLS reload requires server restart for full effect"])?;
-                            info!("REHASH SSL: TLS configuration validated by {}", user.nickname());
+                            match server.reload_tls().await {
+                                Ok(_) => {
+                                    client.send_numeric(NumericReply::RplLocops, &["REHASH SSL: TLS configuration reloaded successfully"])?;
+                                    info!("REHASH SSL: TLS configuration reloaded by {}", user.nickname());
+                                }
+                                Err(e) => {
+                                    client.send_numeric(NumericReply::RplLocops, &[&format!("REHASH SSL: Failed to reload TLS configuration: {}", e)])?;
+                                    error!("REHASH SSL: Failed to reload TLS configuration by {}: {}", user.nickname(), e);
+                                }
+                            }
                         }
                         Err(e) => {
                             client.send_numeric(NumericReply::RplLocops, &[&format!("REHASH SSL: Failed to validate TLS settings: {}", e)])?;

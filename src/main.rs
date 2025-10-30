@@ -72,19 +72,21 @@ async fn main() -> anyhow::Result<()> {
     
     // Load configuration
     let config = if cli.config.exists() {
+        // Test configuration if requested
+        if cli.test_config {
+            return validate_config(&cli.config);
+        }
+
         info!("Loading configuration from {:?}", cli.config);
         Config::from_file(&cli.config)?
     } else {
+        if cli.test_config {
+            eprintln!("❌ Configuration file not found: {:?}", cli.config);
+            std::process::exit(1);
+        }
         info!("Configuration file not found, using defaults");
         Config::default()
     };
-    
-    // Test configuration if requested
-    if cli.test_config {
-        config.validate()?;
-        info!("Configuration is valid");
-        return Ok(());
-    }
     
     // Validate configuration
     config.validate()?;
@@ -151,4 +153,78 @@ fn show_info() {
 /// Show version information
 fn show_version() {
     println!("rustircd {}", env!("CARGO_PKG_VERSION"));
+}
+
+/// Validate configuration file and display detailed results
+fn validate_config(config_path: &PathBuf) -> anyhow::Result<()> {
+    println!("🔍 Validating configuration file: {:?}", config_path);
+    println!();
+
+    // Try to load the configuration
+    let config = match Config::from_file(config_path) {
+        Ok(config) => {
+            println!("✅ Configuration file parsed successfully");
+            config
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to parse configuration file");
+            eprintln!();
+            eprintln!("Error details:");
+            eprintln!("{}", e);
+            eprintln!();
+
+            // Try to extract line number information from TOML parse errors
+            let error_msg = format!("{}", e);
+            if error_msg.contains("line") || error_msg.contains("column") {
+                eprintln!("💡 Tip: Check the line and column numbers mentioned above in your config file");
+            }
+
+            std::process::exit(1);
+        }
+    };
+
+    println!();
+    println!("🔍 Running validation checks...");
+    println!();
+
+    // Validate the configuration
+    match config.validate() {
+        Ok(_) => {
+            println!("✅ Configuration validation passed!");
+            println!();
+            println!("Summary:");
+            println!("  Server name: {}", config.server.name);
+            println!("  Network name: {}", config.network.name);
+            println!("  Ports configured: {}", config.connection.ports.len());
+            println!("  TLS enabled: {}", config.security.tls.enabled);
+
+            if !config.modules.enabled_modules.is_empty() {
+                println!("  Modules: {}", config.modules.enabled_modules.join(", "));
+            }
+
+            if !config.services.services.is_empty() {
+                let enabled_services: Vec<_> = config.services.services
+                    .iter()
+                    .filter(|s| s.enabled)
+                    .map(|s| s.name.as_str())
+                    .collect();
+                if !enabled_services.is_empty() {
+                    println!("  Services: {}", enabled_services.join(", "));
+                }
+            }
+
+            println!();
+            println!("✅ Configuration is ready to use!");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("❌ Configuration validation failed");
+            eprintln!();
+            eprintln!("Validation errors:");
+            eprintln!("{}", e);
+            eprintln!();
+            eprintln!("💡 Please fix the errors above and try again");
+            std::process::exit(1);
+        }
+    }
 }

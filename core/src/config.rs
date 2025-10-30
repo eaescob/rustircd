@@ -71,6 +71,20 @@ pub struct ServerConfig {
     pub show_server_details_in_stats: bool,
     /// MOTD (Message of the Day) file path
     pub motd_file: Option<String>,
+    /// WHOIS string for IRC operators (default: "is an IRC Operator")
+    #[serde(default = "default_oper_whois_string")]
+    pub oper_whois_string: String,
+    /// WHOIS string for server administrators (default: "is a Server Administrator")
+    #[serde(default = "default_admin_whois_string")]
+    pub admin_whois_string: String,
+}
+
+fn default_oper_whois_string() -> String {
+    "is an IRC Operator".to_string()
+}
+
+fn default_admin_whois_string() -> String {
+    "is a Server Administrator".to_string()
 }
 
 /// Network configuration
@@ -820,6 +834,8 @@ impl Default for ServerConfig {
             admin_location2: "https://github.com/rustircd/rustircd".to_string(),
             show_server_details_in_stats: true, // Default to showing details for operators
             motd_file: Some("motd.txt".to_string()), // Default MOTD file
+            oper_whois_string: default_oper_whois_string(),
+            admin_whois_string: default_admin_whois_string(),
         }
     }
 }

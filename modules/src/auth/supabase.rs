@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
+use argon2::{Argon2, PasswordHash, PasswordVerifier};
 
 /// Supabase authentication configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,17 +223,18 @@ impl SupabaseAuthProvider {
         }
     }
 
-    /// Verify password against stored hash
+    /// Verify password against stored hash using Argon2
     fn verify_password(&self, password: &str, stored_hash: &str) -> Result<bool> {
-        // In a real implementation, you would use a proper password hashing library
-        // like argon2, bcrypt, or scrypt. For demonstration, we'll do a simple comparison
-        // WARNING: This is NOT secure for production use!
-        
-        // For Supabase, you might want to use their built-in auth system instead
-        // This is just an example for custom user tables
-        
-        // Simple hash verification (replace with proper implementation)
-        Ok(password == stored_hash)
+        // Parse the stored hash (must be in PHC string format)
+        let parsed_hash = PasswordHash::new(stored_hash)
+            .map_err(|e| Error::Auth(format!("Invalid password hash format: {}", e)))?;
+
+        // Verify the password against the hash
+        let argon2 = Argon2::default();
+        match argon2.verify_password(password.as_bytes(), &parsed_hash) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
     }
 
     /// Get a connection from the pool

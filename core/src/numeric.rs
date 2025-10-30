@@ -1073,7 +1073,15 @@ impl NumericReply {
             vec![nick.to_string(), "is an IRC operator".to_string()],
         )
     }
-    
+
+    /// RPL_WHOISOPERATOR with custom message
+    pub fn whois_operator_custom(nick: &str, message: &str) -> Message {
+        Self::RplWhoisOperator.reply(
+            "*",
+            vec![nick.to_string(), message.to_string()],
+        )
+    }
+
     /// RPL_WHOISIDLE
     pub fn whois_idle(nick: &str, signon_time: &str, idle_time: &str) -> Message {
         Self::RplWhoisIdle.reply(

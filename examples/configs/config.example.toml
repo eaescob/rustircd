@@ -58,6 +58,14 @@ show_server_details_in_stats = true
 # Can be absolute or relative to the working directory
 motd_file = "motd.txt"
 
+# Optional: Custom WHOIS reply strings for operators and administrators
+# These strings appear in the WHOIS response when querying operators
+# oper_whois_string: Used for operators without Administrator flag
+# admin_whois_string: Used for operators with Administrator flag
+# If not specified, defaults are used
+oper_whois_string = "is an IRC Operator"
+admin_whois_string = "is a Server Administrator"
+
 
 ################################################################################
 # CONNECTION CLASSES
@@ -192,7 +200,9 @@ links = [
 # - Administrator:   Enhanced administrative privileges
 #                    • Can see secret channels in /WHOIS
 #                    • Access to additional server information
-#                    • Use for senior staff members
+#                    • Automatically granted admin umode +a upon OPER
+#                    • Receives ADMINWALL messages (operator broadcasts)
+#                    • Use for senior staff members and server administrators
 #
 # - Spy:             Notified when users /WHOIS them
 #                    • Receives alerts when someone queries their info

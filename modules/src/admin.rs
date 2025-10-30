@@ -110,19 +110,19 @@ impl AdminModule {
     }
     
     /// Handle ADMINWALL command
-    async fn handle_adminwall(&self, client: &Client, user: &User, args: &[String]) -> Result<()> {
+    async fn handle_adminwall(&self, client: &Client, user: &User, args: &[String], context: &ModuleContext) -> Result<()> {
         if !user.is_operator() {
             client.send_numeric(NumericReply::ErrNoPrivileges, &["Permission denied"])?;
             return Ok(());
         }
-        
+
         if args.is_empty() {
             client.send_numeric(NumericReply::ErrNeedMoreParams, &["ADMINWALL", "Not enough parameters"])?;
             return Ok(());
         }
-        
+
         let message = args.join(" ");
-        
+
         // Create admin wall message
         let admin_wall = AdminWallMessage {
             message: message.clone(),
@@ -130,35 +130,25 @@ impl AdminModule {
             timestamp: self.get_current_time(),
             target_servers: None, // Broadcast to all servers
         };
-        
+
         // Store in history
         {
             let mut history = self.admin_wall_history.write().await;
             history.push(admin_wall.clone());
-            
+
             // Trim history if too large
             let history_len = history.len();
             if history_len > self.max_wall_history {
                 history.drain(0..history_len - self.max_wall_history);
             }
         }
-        
-        // Send admin wall message to all operators
-        // Implement broadcasting to all operators on the network
-        let admin_wall_msg = format!("ADMINWALL from {}: {}", user.nickname(), message);
-        client.send_numeric(NumericReply::RplAdminWall, &[&admin_wall_msg])?;
-        
-        // TODO: Integrate with broadcast system to send to all operators
-        // In production, this would:
-        // 1. Get all connected operators from the user database
-        // 2. Send ADMINWALL message to each operator
-        // 3. Broadcast to other servers for network-wide operator notification
-        
-        tracing::info!("ADMINWALL broadcast: {}", admin_wall_msg);
-        tracing::debug!("Would broadcast ADMINWALL to all operators on the network");
-        
-        info!("ADMINWALL from {}: {}", user.nickname(), message);
-        
+
+        // Broadcast admin wall message to all admins (users with umode +a)
+        let admin_wall_msg = format!("*** ADMINWALL from {}: {}", user.nickname(), message);
+        self.send_to_admins(context, &admin_wall_msg).await?;
+
+        info!("ADMINWALL from {}: {} (broadcast to all operators)", user.nickname(), message);
+
         Ok(())
     }
     
@@ -420,6 +410,25 @@ impl AdminModule {
             .unwrap_or_default()
             .as_secs()
     }
+
+    /// Send a notice to all admins (users with umode +a)
+    async fn send_to_admins(&self, context: &ModuleContext, notice: &str) -> Result<()> {
+        let client_connections = context.client_connections.read().await;
+
+        for client in client_connections.values() {
+            if let Some(user) = client.get_user() {
+                if user.is_admin() {
+                    let notice_msg = Message::new(
+                        MessageType::Notice,
+                        vec!["*".to_string(), notice.to_string()]
+                    );
+                    let _ = client.send(notice_msg);
+                }
+            }
+        }
+
+        Ok(())
+    }
     
     /// Update admin information
     pub async fn update_admin_info(&mut self, admin_info: AdminInfo) {
@@ -468,7 +477,7 @@ impl Module for AdminModule {
         Ok(())
     }
 
-    async fn handle_message(&mut self, client: &Client, message: &Message, _context: &ModuleContext) -> Result<ModuleResult> {
+    async fn handle_message(&mut self, client: &Client, message: &Message, context: &ModuleContext) -> Result<ModuleResult> {
         let user = match &client.user {
             Some(u) => u,
             None => return Ok(ModuleResult::NotHandled),
@@ -480,7 +489,7 @@ impl Module for AdminModule {
                 Ok(ModuleResult::Handled)
             }
             MessageType::Custom(ref cmd) if cmd == "ADMINWALL" => {
-                self.handle_adminwall(client, user, &message.params).await?;
+                self.handle_adminwall(client, user, &message.params, context).await?;
                 Ok(ModuleResult::Handled)
             }
             MessageType::Custom(ref cmd) if cmd == "LOCops" => {
@@ -495,7 +504,7 @@ impl Module for AdminModule {
         }
     }
     
-    async fn handle_message_with_server(&mut self, client: &Client, message: &Message, server: Option<&rustircd_core::Server>, _context: &ModuleContext) -> Result<ModuleResult> {
+    async fn handle_message_with_server(&mut self, client: &Client, message: &Message, server: Option<&rustircd_core::Server>, context: &ModuleContext) -> Result<ModuleResult> {
         let user = match &client.user {
             Some(u) => u,
             None => return Ok(ModuleResult::NotHandled),
@@ -507,7 +516,7 @@ impl Module for AdminModule {
                 Ok(ModuleResult::Handled)
             }
             MessageType::Custom(ref cmd) if cmd == "ADMINWALL" => {
-                self.handle_adminwall(client, user, &message.params).await?;
+                self.handle_adminwall(client, user, &message.params, context).await?;
                 Ok(ModuleResult::Handled)
             }
             MessageType::Custom(ref cmd) if cmd == "LOCops" => {

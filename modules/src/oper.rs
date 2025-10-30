@@ -96,6 +96,12 @@ impl OperModule {
                 // Grant operator privileges (this will set the +o mode securely)
                 user.set_operator_flags(operator_flags.clone());
 
+                // Grant admin umode +a if user has Administrator flag
+                if operator_flags.contains(&OperatorFlag::Administrator) {
+                    user.add_mode_internal('a');
+                    info!("Granted admin umode +a to operator {}", user.nick);
+                }
+
                 // Update user in database
                 context.update_user(user.clone())?;
 

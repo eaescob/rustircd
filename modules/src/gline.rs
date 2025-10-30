@@ -121,7 +121,7 @@ impl GlineModule {
     async fn add_gline(&self, client: &Client, user: &User, mask: &str, reason: &str, duration: Option<u64>, context: &ModuleContext) -> Result<()> {
         let current_time = self.get_current_time();
         let expire_time = duration.map(|d| current_time + d);
-        
+
         // Check duration limits
         if let Some(dur) = duration {
             if dur > self.config.max_duration {
@@ -129,7 +129,7 @@ impl GlineModule {
                 return Ok(());
             }
         }
-        
+
         let gline = GlobalBan {
             mask: mask.to_string(),
             reason: reason.to_string(),
@@ -138,38 +138,52 @@ impl GlineModule {
             expire_time,
             is_active: true,
         };
-        
+
         let mut glines = self.glines.write().await;
         glines.insert(mask.to_string(), gline);
-        
+
         client.send_numeric(NumericReply::RplGline, &[mask, reason, &format!("Set by {}", user.nickname())])?;
-        
+
         info!("GLINE added: {} by {} - {}", mask, user.nickname(), reason);
-        
+
+        // Broadcast notification to all operators
+        let duration_str = if let Some(dur) = duration {
+            format!("temporary {} min. ", dur / 60)
+        } else {
+            String::new()
+        };
+        let notice = format!("{} is adding a {}G-Line for [{}] [{}]",
+            user.nickname(), duration_str, mask, reason);
+        self.send_to_operators(context, &notice).await?;
+
         // Broadcast to other servers
         self.broadcast_gline_to_servers(mask, reason, &user.nickname(), duration, context).await?;
-        
+
         // Check existing connections and disconnect matching users
-        self.disconnect_matching_users(mask, &format!("GLINE: {}", reason), context).await?;
-        
+        self.disconnect_matching_users(mask, &format!("G-Lined: {}", reason), context).await?;
+
         Ok(())
     }
     
     /// Remove a GLINE
     async fn remove_gline(&self, client: &Client, user: &User, mask: &str, context: &ModuleContext) -> Result<()> {
         let mut glines = self.glines.write().await;
-        
+
         if glines.remove(mask).is_some() {
             client.send_numeric(NumericReply::RplGline, &[mask, "Removed", &format!("Removed by {}", user.nickname())])?;
             info!("GLINE removed: {} by {}", mask, user.nickname());
-            
-            // Broadcast removal to other servers
+
+            // Broadcast notification to all operators
+            let notice = format!("{} has removed the G-Line for [{}]", user.nickname(), mask);
             drop(glines); // Release the lock before async call
+            self.send_to_operators(context, &notice).await?;
+
+            // Broadcast removal to other servers
             self.broadcast_ungline_to_servers(mask, &user.nickname(), context).await?;
         } else {
             client.send_numeric(NumericReply::ErrNoSuchGline, &[mask, "No such GLINE"])?;
         }
-        
+
         Ok(())
     }
     
@@ -420,6 +434,25 @@ impl GlineModule {
         );
         context.broadcast_to_servers(message).await?;
         info!("UNGLINE broadcasted to servers: {} removed by {}", mask, removed_by);
+        Ok(())
+    }
+
+    /// Send a notice to all operators
+    async fn send_to_operators(&self, context: &ModuleContext, notice: &str) -> Result<()> {
+        let client_connections = context.client_connections.read().await;
+
+        for client in client_connections.values() {
+            if let Some(user) = client.get_user() {
+                if user.is_operator() {
+                    let notice_msg = Message::new(
+                        MessageType::Notice,
+                        vec!["*".to_string(), notice.to_string()]
+                    );
+                    let _ = client.send(notice_msg);
+                }
+            }
+        }
+
         Ok(())
     }
     

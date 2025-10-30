@@ -2700,8 +2700,13 @@ impl Server {
                 let _ = client.send(whois_server_msg);
                 
                 if user.is_operator {
-                    let whois_op_msg = NumericReply::whois_operator(&user.nick);
-                    let _ = client.send(whois_op_msg);
+                    // Use admin string if user is administrator, otherwise use operator string
+                    let whois_msg = if user.is_administrator() {
+                        NumericReply::whois_operator_custom(&user.nick, &self.config.server.admin_whois_string)
+                    } else {
+                        NumericReply::whois_operator_custom(&user.nick, &self.config.server.oper_whois_string)
+                    };
+                    let _ = client.send(whois_msg);
                 }
                 
                 // Show channels if requesting user is administrator

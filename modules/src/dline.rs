@@ -120,14 +120,14 @@ impl DlineModule {
     async fn add_dline(&self, client: &Client, user: &User, hostname: &str, reason: &str, duration: Option<u64>, context: &ModuleContext) -> Result<()> {
         let current_time = self.get_current_time();
         let expire_time = duration.map(|d| current_time + d);
-        
+
         if let Some(dur) = duration {
             if dur > self.config.max_duration {
                 client.send_numeric(NumericReply::ErrInvalidDuration, &[&format!("Maximum duration is {} seconds", self.config.max_duration)])?;
                 return Ok(());
             }
         }
-        
+
         let dline = DnsLine {
             hostname: hostname.to_string(),
             reason: reason.to_string(),
@@ -136,38 +136,52 @@ impl DlineModule {
             expire_time,
             is_active: true,
         };
-        
+
         let mut dlines = self.dlines.write().await;
         dlines.insert(hostname.to_string(), dline);
-        
+
         client.send_numeric(NumericReply::RplDline, &[hostname, reason, &format!("Set by {}", user.nickname())])?;
-        
+
         info!("DLINE added: {} by {} - {}", hostname, user.nickname(), reason);
-        
+
+        // Broadcast notification to all operators
+        let duration_str = if let Some(dur) = duration {
+            format!("temporary {} min. ", dur / 60)
+        } else {
+            String::new()
+        };
+        let notice = format!("{} is adding a {}D-Line for [{}] [{}]",
+            user.nickname(), duration_str, hostname, reason);
+        self.send_to_operators(context, &notice).await?;
+
         // Broadcast to other servers
         self.broadcast_dline_to_servers(hostname, reason, &user.nickname(), duration, context).await?;
-        
+
         // Check existing connections and disconnect matching users
-        self.disconnect_matching_users(hostname, &format!("DLINE: {}", reason), context).await?;
-        
+        self.disconnect_matching_users(hostname, &format!("D-Lined: {}", reason), context).await?;
+
         Ok(())
     }
     
     /// Remove a DLINE
     async fn remove_dline(&self, client: &Client, user: &User, hostname: &str, context: &ModuleContext) -> Result<()> {
         let mut dlines = self.dlines.write().await;
-        
+
         if dlines.remove(hostname).is_some() {
             client.send_numeric(NumericReply::RplDline, &[hostname, "Removed", &format!("Removed by {}", user.nickname())])?;
             info!("DLINE removed: {} by {}", hostname, user.nickname());
-            
-            // Broadcast removal to other servers
+
+            // Broadcast notification to all operators
+            let notice = format!("{} has removed the D-Line for [{}]", user.nickname(), hostname);
             drop(dlines); // Release the lock before async call
+            self.send_to_operators(context, &notice).await?;
+
+            // Broadcast removal to other servers
             self.broadcast_undline_to_servers(hostname, &user.nickname(), context).await?;
         } else {
             client.send_numeric(NumericReply::ErrNoSuchDline, &[hostname, "No such DLINE"])?;
         }
-        
+
         Ok(())
     }
     
@@ -375,6 +389,25 @@ impl DlineModule {
         );
         context.broadcast_to_servers(message).await?;
         info!("UNDLINE broadcasted to servers: {} removed by {}", hostname, removed_by);
+        Ok(())
+    }
+
+    /// Send a notice to all operators
+    async fn send_to_operators(&self, context: &ModuleContext, notice: &str) -> Result<()> {
+        let client_connections = context.client_connections.read().await;
+
+        for client in client_connections.values() {
+            if let Some(user) = client.get_user() {
+                if user.is_operator() {
+                    let notice_msg = Message::new(
+                        MessageType::Notice,
+                        vec!["*".to_string(), notice.to_string()]
+                    );
+                    let _ = client.send(notice_msg);
+                }
+            }
+        }
+
         Ok(())
     }
     

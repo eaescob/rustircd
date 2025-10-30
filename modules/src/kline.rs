@@ -120,14 +120,14 @@ impl KlineModule {
     async fn add_kline(&self, client: &Client, user: &User, mask: &str, reason: &str, duration: Option<u64>, context: &ModuleContext) -> Result<()> {
         let current_time = self.get_current_time();
         let expire_time = duration.map(|d| current_time + d);
-        
+
         if let Some(dur) = duration {
             if dur > self.config.max_duration {
                 client.send_numeric(NumericReply::ErrInvalidDuration, &[&format!("Maximum duration is {} seconds", self.config.max_duration)])?;
                 return Ok(());
             }
         }
-        
+
         let kline = KillLine {
             mask: mask.to_string(),
             reason: reason.to_string(),
@@ -136,38 +136,52 @@ impl KlineModule {
             expire_time,
             is_active: true,
         };
-        
+
         let mut klines = self.klines.write().await;
         klines.insert(mask.to_string(), kline);
-        
+
         client.send_numeric(NumericReply::RplKline, &[mask, reason, &format!("Set by {}", user.nickname())])?;
-        
+
         info!("KLINE added: {} by {} - {}", mask, user.nickname(), reason);
-        
+
+        // Broadcast notification to all operators
+        let duration_str = if let Some(dur) = duration {
+            format!("temporary {} min. ", dur / 60)
+        } else {
+            String::new()
+        };
+        let notice = format!("{} is adding a {}K-Line for [{}] [{}]",
+            user.nickname(), duration_str, mask, reason);
+        self.send_to_operators(context, &notice).await?;
+
         // Broadcast to other servers
         self.broadcast_kline_to_servers(mask, reason, &user.nickname(), duration, context).await?;
-        
+
         // Check existing connections and disconnect matching users
-        self.disconnect_matching_users(mask, &format!("KLINE: {}", reason), context).await?;
-        
+        self.disconnect_matching_users(mask, &format!("K-Lined: {}", reason), context).await?;
+
         Ok(())
     }
     
     /// Remove a KLINE
     async fn remove_kline(&self, client: &Client, user: &User, mask: &str, context: &ModuleContext) -> Result<()> {
         let mut klines = self.klines.write().await;
-        
+
         if klines.remove(mask).is_some() {
             client.send_numeric(NumericReply::RplKline, &[mask, "Removed", &format!("Removed by {}", user.nickname())])?;
             info!("KLINE removed: {} by {}", mask, user.nickname());
-            
-            // Broadcast removal to other servers
+
+            // Broadcast notification to all operators
+            let notice = format!("{} has removed the K-Line for [{}]", user.nickname(), mask);
             drop(klines); // Release the lock before async call
+            self.send_to_operators(context, &notice).await?;
+
+            // Broadcast removal to other servers
             self.broadcast_unkline_to_servers(mask, &user.nickname(), context).await?;
         } else {
             client.send_numeric(NumericReply::ErrNoSuchKline, &[mask, "No such KLINE"])?;
         }
-        
+
         Ok(())
     }
     
@@ -418,6 +432,25 @@ impl KlineModule {
         );
         context.broadcast_to_servers(message).await?;
         info!("UNKLINE broadcasted to servers: {} removed by {}", mask, removed_by);
+        Ok(())
+    }
+
+    /// Send a notice to all operators
+    async fn send_to_operators(&self, context: &ModuleContext, notice: &str) -> Result<()> {
+        let client_connections = context.client_connections.read().await;
+
+        for client in client_connections.values() {
+            if let Some(user) = client.get_user() {
+                if user.is_operator() {
+                    let notice_msg = Message::new(
+                        MessageType::Notice,
+                        vec!["*".to_string(), notice.to_string()]
+                    );
+                    let _ = client.send(notice_msg);
+                }
+            }
+        }
+
         Ok(())
     }
     
